@@ -15,8 +15,11 @@ const API_BASE_URL = 'https://maintenance.umanerp.com';
 const PDF_PROXY_URL = '/proxy-pdf';
 
 // LLM Parser Settings
-const USE_LLM_PARSER = true; // Enabled with retry + exponential backoff
+const USE_LLM_PARSER = true; // With 3 second delay between pages to prevent rate limit
 const GROQ_API_KEY = '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'; // Groq API key
+
+// Utility function for delays
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const IPQCForm = () => {
   const fileInputRef = useRef(null);
@@ -625,6 +628,14 @@ const IPQCForm = () => {
     // Try LLM parser first if enabled
     if (useLLMParser && GROQ_API_KEY) {
       try {
+        // Add 3 second delay BEFORE each LLM call to avoid Groq rate limit
+        // Groq free tier: 30 req/min = 2 seconds per request minimum
+        // 3 seconds provides safe buffer for 7 pages
+        if (pageNumber > 1) {
+          console.log(`⏳ Waiting 3 seconds before LLM call (rate limit protection)...`);
+          await delay(3000);
+        }
+        
         console.log('🤖 Using LLM parser...');
         const llmData = await parseWithLLM(pageText, pageNumber);
         if (llmData && Object.keys(llmData).length > 0) {
