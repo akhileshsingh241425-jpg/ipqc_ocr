@@ -1,0 +1,102 @@
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+require('dotenv').config();
+
+const { sequelize } = require('./models');
+const formsRoutes = require('./routes/forms');
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// ========== MIDDLEWARE ==========
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  credentials: true
+}));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Request logging
+app.use((req, res, next) => {
+  console.log(`📨 ${new Date().toISOString()} | ${req.method} ${req.path}`);
+  next();
+});
+
+// ========== ROUTES ==========
+app.use('/api/forms', formsRoutes);
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    database: 'MySQL',
+    version: '1.0.0'
+  });
+});
+
+// ========== ERROR HANDLING ==========
+app.use((err, req, res, next) => {
+  console.error('❌ Error:', err);
+  res.status(500).json({ 
+    success: false, 
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: 'Route not found' });
+});
+
+// ========== DATABASE SYNC & SERVER START ==========
+const startServer = async () => {
+  try {
+    // Sync database models (create tables if not exist)
+    await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
+    console.log('✅ Database tables synced successfully!');
+    
+    // Start the Express server
+    const server = app.listen(PORT, () => {
+      console.log(`
+╔════════════════════════════════════════════════════════════╗
+║                                                            ║
+║   🚀 IPQC Backend Server Running!                         ║
+║                                                            ║
+║   📍 URL: http://localhost:${PORT}                          ║
+║   📊 Database: MySQL (${process.env.DB_NAME || 'ipqc_db'})                      ║
+║   🌍 Environment: ${process.env.NODE_ENV || 'development'}                       ║
+║                                                            ║
+║   API Endpoints:                                           ║
+║   ├─ GET    /api/health           - Health check          ║
+║   ├─ GET    /api/forms            - Get all forms         ║
+║   ├─ GET    /api/forms/:id        - Get form by ID        ║
+║   ├─ POST   /api/forms            - Create new form       ║
+║   ├─ PUT    /api/forms/:id        - Update form           ║
+║   ├─ POST   /api/forms/:id/save   - Save form             ║
+║   ├─ POST   /api/forms/save-by-checklist - Save by CID    ║
+║   ├─ DELETE /api/forms/:id        - Delete form           ║
+║   └─ POST   /api/forms/bulk-status - Get bulk status      ║
+║                                                            ║
+╚════════════════════════════════════════════════════════════╝
+      `);
+    });
+
+    // Handle server errors
+    server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        console.error(`❌ Port ${PORT} is already in use`);
+      } else {
+        console.error('❌ Server error:', error);
+      }
+      process.exit(1);
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
