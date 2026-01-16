@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const https = require('https');
+const http = require('http');
 require('dotenv').config();
 
 const { sequelize } = require('./models');
@@ -26,6 +28,74 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use((req, res, next) => {
   console.log(`📨 ${new Date().toISOString()} | ${req.method} ${req.path}`);
   next();
+});
+
+// ========== PDF PROXY for Production ==========
+app.get('/proxy-pdf/*', async (req, res) => {
+  try {
+    const pdfPath = req.path.replace('/proxy-pdf/', '');
+    const targetUrl = `https://gslogsapi.gautamsolar.com/${pdfPath}`;
+    
+    console.log(`📄 Proxying PDF: ${targetUrl}`);
+    
+    https.get(targetUrl, (proxyRes) => {
+      // Set response headers
+      res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'application/pdf');
+      res.setHeader('Content-Disposition', proxyRes.headers['content-disposition'] || 'inline');
+      
+      // Pipe the response
+      proxyRes.pipe(res);
+    }).on('error', (err) => {
+      console.error('❌ PDF Proxy Error:', err.message);
+      res.status(500).json({ error: 'Failed to fetch PDF' });
+    });
+  } catch (error) {
+    console.error('❌ PDF Proxy Error:', error);
+    res.status(500).json({ error: 'Failed to fetch PDF' });
+  }
+});
+
+// ========== Azure OCR Proxy ==========
+app.post('/proxy-azure-ocr', async (req, res) => {
+  try {
+    const { endpoint, subscriptionKey, imageData } = req.body;
+    
+    const url = new URL(endpoint);
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Ocp-Apim-Subscription-Key': subscriptionKey,
+      }
+    };
+    
+    const proxyReq = https.request(options, (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', chunk => data += chunk);
+      proxyRes.on('end', () => {
+        try {
+          res.status(proxyRes.statusCode).json(JSON.parse(data));
+        } catch (e) {
+          res.status(proxyRes.statusCode).send(data);
+        }
+      });
+    });
+    
+    proxyReq.on('error', (err) => {
+      console.error('❌ Azure OCR Proxy Error:', err.message);
+      res.status(500).json({ error: 'Failed to process OCR request' });
+    });
+    
+    // Convert base64 to buffer and send
+    const buffer = Buffer.from(imageData, 'base64');
+    proxyReq.write(buffer);
+    proxyReq.end();
+  } catch (error) {
+    console.error('❌ Azure OCR Proxy Error:', error);
+    res.status(500).json({ error: 'Failed to process OCR request' });
+  }
 });
 
 // ========== ROUTES ==========
