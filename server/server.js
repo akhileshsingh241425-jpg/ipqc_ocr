@@ -9,6 +9,11 @@ const formsRoutes = require('./routes/forms');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Serve static files from React build in production
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, '../build')));
+}
+
 // ========== MIDDLEWARE ==========
 app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
@@ -45,10 +50,17 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Route not found' });
-});
+// Serve React app for any other routes (production only)
+if (process.env.NODE_ENV === 'production') {
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../build', 'index.html'));
+  });
+} else {
+  // 404 handler for development
+  app.use((req, res) => {
+    res.status(404).json({ success: false, error: 'Route not found' });
+  });
+}
 
 // ========== DATABASE SYNC & SERVER START ==========
 const startServer = async () => {
