@@ -34,7 +34,7 @@ app.use((req, res, next) => {
 app.get('/proxy-pdf/*', async (req, res) => {
   try {
     const pdfPath = req.path.replace('/proxy-pdf/', '');
-    const targetUrl = `https://gslogsapi.gautamsolar.com/${pdfPath}`;
+    const targetUrl = `https://maintenance.umanerp.com/${pdfPath}`;
     
     console.log(`📄 Proxying PDF: ${targetUrl}`);
     
