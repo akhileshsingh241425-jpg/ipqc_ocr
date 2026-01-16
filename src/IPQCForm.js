@@ -1524,7 +1524,7 @@ const IPQCForm = () => {
       };
       
       // Save to backend database
-      const response = await fetch(`${API_BASE_URL}/forms/save-by-checklist`, {
+      const response = await fetch(`${API_BASE_URL}/api/forms/save-by-checklist`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
