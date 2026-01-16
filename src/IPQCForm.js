@@ -628,13 +628,11 @@ const IPQCForm = () => {
     // Try LLM parser first if enabled
     if (useLLMParser && GROQ_API_KEY) {
       try {
-        // Add 3 second delay BEFORE each LLM call to avoid Groq rate limit
+        // Add 4 second delay BEFORE EVERY LLM call (including Page 1) to avoid Groq rate limit
         // Groq free tier: 30 req/min = 2 seconds per request minimum
-        // 3 seconds provides safe buffer for 7 pages
-        if (pageNumber > 1) {
-          console.log(`⏳ Waiting 3 seconds before LLM call (rate limit protection)...`);
-          await delay(3000);
-        }
+        // 4 seconds provides safe buffer for all pages (7 pages × 4s = 28s total)
+        console.log(`⏳ Waiting 4 seconds before LLM call (rate limit protection)...`);
+        await delay(4000);
         
         console.log('🤖 Using LLM parser...');
         const llmData = await parseWithLLM(pageText, pageNumber);
