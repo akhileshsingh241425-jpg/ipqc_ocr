@@ -74,6 +74,36 @@ app.get('/proxy-pdf/*', async (req, res) => {
   }
 });
 
+// ========== API PROXY to maintenance.umanerp.com ==========
+app.get('/api/peelTest/*', async (req, res) => {
+  try {
+    const apiPath = req.path;
+    const targetUrl = `https://maintenance.umanerp.com${apiPath}${req.url.includes('?') ? '?' + req.url.split('?')[1] : ''}`;
+    
+    console.log(`🔄 Proxying API GET: ${targetUrl}`);
+    
+    https.get(targetUrl, (proxyRes) => {
+      res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'application/json');
+      
+      let data = '';
+      proxyRes.on('data', chunk => data += chunk);
+      proxyRes.on('end', () => {
+        try {
+          res.status(proxyRes.statusCode).json(JSON.parse(data));
+        } catch (e) {
+          res.status(proxyRes.statusCode).send(data);
+        }
+      });
+    }).on('error', (err) => {
+      console.error('❌ API Proxy Error:', err.message);
+      res.status(500).json({ error: 'Failed to fetch from API' });
+    });
+  } catch (error) {
+    console.error('❌ API Proxy Error:', error);
+    res.status(500).json({ error: 'Failed to fetch from API' });
+  }
+});
+
 // ========== Azure OCR Proxy ==========
 app.post('/proxy-azure-ocr', async (req, res) => {
   try {

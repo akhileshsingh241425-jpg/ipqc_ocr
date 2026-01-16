@@ -9,8 +9,11 @@ import { parseWithLLM, parseWithKeywordMatching } from './services/llmParser';
 import { exportIPQCToExcel } from './services/excelLLMMapper';
 import './IPQCForm.css';
 
-// API Base URL for IPQC PDFs
-const API_BASE_URL = 'https://maintenance.umanerp.com';
+// API Base URL - use local backend server in production, direct in development
+const API_BASE_URL = process.env.NODE_ENV === 'production' 
+  ? 'http://93.127.194.235:8080'  // Local backend server (proxies to maintenance.umanerp.com)
+  : 'https://maintenance.umanerp.com';  // Direct call in development
+  
 // Proxy URL for PDF files (to bypass CORS in development)
 const PDF_PROXY_URL = '/proxy-pdf';
 
