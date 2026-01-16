@@ -18,9 +18,27 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ========== MIDDLEWARE ==========
+// Allow multiple origins for CORS
+const allowedOrigins = process.env.CORS_ORIGIN 
+  ? process.env.CORS_ORIGIN.split(',')
+  : ['http://localhost:3000'];
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-  credentials: true
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      console.log(`❌ CORS blocked: ${origin}`);
+      return callback(new Error('CORS policy: Origin not allowed'), false);
+    }
+    
+    console.log(`✅ CORS allowed: ${origin}`);
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
