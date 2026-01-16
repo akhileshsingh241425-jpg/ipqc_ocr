@@ -9,10 +9,13 @@ import { parseWithLLM, parseWithKeywordMatching } from './services/llmParser';
 import { exportIPQCToExcel } from './services/excelLLMMapper';
 import './IPQCForm.css';
 
-// API Base URL - use local backend server in production, direct in development
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? 'http://93.127.194.235:8080'  // Local backend server (proxies to maintenance.umanerp.com)
-  : 'https://maintenance.umanerp.com';  // Direct call in development
+// API Base URL - Always use local backend server (proxies to maintenance.umanerp.com)
+// This avoids CORS issues in both development and production
+const API_BASE_URL = window.location.hostname === 'localhost' 
+  ? 'http://localhost:8080'  // Local development
+  : `http://${window.location.hostname}:8080`;  // Production (same server)
+
+console.log('🌐 API_BASE_URL:', API_BASE_URL);
   
 // Proxy URL for PDF files (to bypass CORS in development)
 const PDF_PROXY_URL = '/proxy-pdf';
