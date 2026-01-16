@@ -17,7 +17,7 @@ import {
 } from './ipqcStageParser';
 
 const GROQ_API_KEY = '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'; // Groq API key
-const GEMINI_API_KEY = 'AIzaSyDcG0m7tev3rg2acb6knyFsqC8GpFI0NM8'; // Google Gemini API key
+const GEMINI_API_KEY = 'AIzaSyAq3VKTBHO6G47GakorL-imfz19RF3ryh4'; // Google Gemini API key
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 const OLLAMA_URL = 'http://localhost:11434/api/generate';
