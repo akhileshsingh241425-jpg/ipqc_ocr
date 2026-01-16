@@ -208,33 +208,32 @@ async function callGeminiAPI(systemPrompt, userPrompt) {
 }
 
 /**
- * Call Hugging Face Inference API (COMPLETELY FREE, no rate limits for small models)
+ * Call Hugging Face Inference API via Backend Proxy (avoids CORS)
  * Get FREE API key: https://huggingface.co/settings/tokens
  * Model: Mistral-7B-Instruct (fast, accurate, free)
  */
 async function callHuggingFaceAPI(systemPrompt, userPrompt) {
-  const response = await fetch(HUGGINGFACE_API_URL, {
+  // Call via backend proxy to avoid CORS
+  const API_BASE_URL = window.location.origin;
+  
+  const response = await fetch(`${API_BASE_URL}/api/llm/huggingface`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      inputs: `<s>[INST] ${systemPrompt}\n\n${userPrompt} [/INST]`,
-      parameters: {
-        max_new_tokens: 2000,
-        temperature: 0.1,
-        return_full_text: false
-      }
+      prompt: `<s>[INST] ${systemPrompt}\n\n${userPrompt} [/INST]`,
+      apiKey: HUGGINGFACE_API_KEY
     })
   });
 
   if (!response.ok) {
-    throw new Error(`Hugging Face API error: ${response.status}`);
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Hugging Face API error: ${response.status}`);
   }
 
-  const data = await response.json();
-  const content = data[0]?.generated_text || '';
+  const result = await response.json();
+  const content = result.data?.[0]?.generated_text || '';
   
   // Parse JSON from response
   return parseJSONFromText(content);

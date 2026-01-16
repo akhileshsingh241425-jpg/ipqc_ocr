@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const { sequelize } = require('./models');
 const formsRoutes = require('./routes/forms');
+const llmRoutes = require('./routes/llm');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -100,6 +101,7 @@ app.post('/proxy-azure-ocr', async (req, res) => {
 
 // ========== ROUTES ==========
 app.use('/api/forms', formsRoutes);
+app.use('/api/llm', llmRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
