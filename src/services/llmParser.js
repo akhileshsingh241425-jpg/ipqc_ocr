@@ -2,10 +2,12 @@
 // Uses FREE LLM APIs to intelligently extract form fields from OCR text
 
 // ============== FREE API OPTIONS ==============
-// 1. Groq API - FREE, very fast (get key: https://console.groq.com/keys)
-// 2. Google Gemini - FREE tier (get key: https://makersuite.google.com/app/apikey)
-// 3. Hugging Face - COMPLETELY FREE, no rate limits (get key: https://huggingface.co/settings/tokens)
-// 4. Ollama - FREE, runs locally (install: https://ollama.ai)
+// 1. Deepinfra - TRULY FREE, generous limits (get key: https://deepinfra.com/dash/api_keys)
+// 2. Together AI - FREE tier, very reliable (get key: https://api.together.xyz/settings/api-keys)
+// 3. Groq API - FREE but rate limited (get key: https://console.groq.com/keys)
+// 4. Google Gemini - FREE tier (get key: https://makersuite.google.com/app/apikey)
+// 5. Hugging Face - COMPLETELY FREE, no rate limits (get key: https://huggingface.co/settings/tokens)
+// 6. Ollama - FREE, runs locally (install: https://ollama.ai)
 
 import {
   parsePage1,
@@ -17,13 +19,76 @@ import {
   parsePage7,
 } from './ipqcStageParser';
 
-const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY || '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';
-const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY || 'AIzaSyAq3VKTBHO6G47GakorL-imfz19RF3ryh4';
-const HUGGINGFACE_API_KEY = process.env.REACT_APP_HUGGINGFACE_API_KEY || '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'; // FREE, NO RATE LIMITS!
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
-const HUGGINGFACE_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2';
-const OLLAMA_URL = 'http://localhost:11434/api/generate';
+const DEEPINFRA_API_KEY = process.env.REACT_APP_DEEPINFRA_API_KEY || 'SkzTNKA3JOPtBmlGtn44CBrfRMkBlfTN'; // Deepinfra (ONLY option enabled!)
+// const TOGETHER_API_KEY = process.env.REACT_APP_TOGETHER_API_KEY || '';
+// const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY || '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';
+// const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY || 'AIzaSyAq3VKTBHO6G47GakorL-imfz19RF3ryh4';
+// const HUGGINGFACE_API_KEY = process.env.REACT_APP_HUGGINGFACE_API_KEY || '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';
+const DEEPINFRA_API_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
+// const TOGETHER_API_URL = 'https://api.together.xyz/v1/chat/completions';
+// const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+// const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+// const HUGGINGFACE_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2';
+// const OLLAMA_URL = 'http://localhost:11434/api/generate';
+
+/**
+ * Call Deepinfra API (ONLY ENABLED OPTION - FREE, Generous limits, reliable, fast)
+ * Get FREE API key: https://deepinfra.com/dash/api_keys
+ */
+async function callDeepinfraAPI(systemPrompt, userPrompt) {
+  const response = await fetch(DEEPINFRA_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${DEEPINFRA_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'mistralai/Mixtral-8x7B-Instruct-v0.1', // Fast, accurate, FREE
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: 2000
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Deepinfra API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || '';
+  
+  // Parse JSON from response
+  return parseJSONFromText(content);
+}
+
+// DISABLED: Together AI
+// async function callTogetherAPI(systemPrompt, userPrompt) {
+//   const response = await fetch(TOGETHER_API_URL, {
+//     method: 'POST',
+//     headers: {
+//       'Authorization': `Bearer ${TOGETHER_API_KEY}`,
+//       'Content-Type': 'application/json'
+//     },
+//     body: JSON.stringify({
+//       model: 'mistralai/Mixtral-8x7B-Instruct-v0.1',
+//       messages: [
+//         { role: 'system', content: systemPrompt },
+//         { role: 'user', content: userPrompt }
+//       ],
+//       temperature: 0.1,
+//       max_tokens: 2000
+//     })
+//   });
+//   if (!response.ok) {
+//     throw new Error(`Together AI API error: ${response.status}`);
+//   }
+//   const data = await response.json();
+//   const content = data.choices?.[0]?.message?.content || '';
+//   return parseJSONFromText(content);
+// }
 
 /**
  * Parse OCR text using Groq LLM (FREE)
@@ -66,203 +131,81 @@ ${ocrText.substring(0, 4000)}
 
 JSON output:`;
 
-  // SKIP GROQ - Rate limited (30 req/min exhausted)
+  // Try Deepinfra ONLY (BEST FREE option - generous limits, reliable)
+  try {
+    if (DEEPINFRA_API_KEY) {
+      console.log('🚀 Using Deepinfra (FREE, generous limits)...');
+      const result = await callDeepinfraAPI(systemPrompt, userPrompt);
+      if (result) {
+        console.log('✅ Deepinfra extraction successful');
+        return result;
+      }
+    }
+  } catch (error) {
+    console.log('⚠️ Deepinfra failed:', error.message);
+  }
+
+  // ALL OTHER APIs DISABLED - Only Deepinfra enabled
+  // // Try Together AI second
   // try {
-  //   if (GROQ_API_KEY) {
-  //     const result = await callGroqAPI(systemPrompt, userPrompt);
+  //   if (TOGETHER_API_KEY) {
+  //     console.log('🚀 Using Together AI...');
+  //     const result = await callTogetherAPI(systemPrompt, userPrompt);
   //     if (result) {
-  //       console.log('✅ Groq LLM extraction successful');
+  //       console.log('✅ Together AI extraction successful');
   //       return result;
   //     }
   //   }
   // } catch (error) {
-  //   console.log('⚠️ Groq API failed:', error.message);
+  //   console.log('⚠️ Together AI failed:', error.message);
   // }
 
-  // Try Hugging Face FIRST (completely free, no rate limits!)
-  try {
-    if (HUGGINGFACE_API_KEY && HUGGINGFACE_API_KEY !== 'hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') {
-      console.log('🤖 Trying Hugging Face (may take 10-20s for model loading)...');
-      const result = await callHuggingFaceAPI(systemPrompt, userPrompt);
-      if (result) {
-        console.log('✅ Hugging Face LLM extraction successful');
-        return result;
-      }
-    }
-  } catch (error) {
-    console.log('⚠️ Hugging Face API failed:', error.message);
-  }
+  // // SKIP GROQ - Rate limited (30 req/min exhausted)
+  // // try {
+  // //   if (GROQ_API_KEY) {
+  // //     const result = await callGroqAPI(systemPrompt, userPrompt);
+  // //     if (result) {
+  // //       console.log('✅ Groq LLM extraction successful');
+  // //       return result;
+  // //     }
+  // //   }
+  // // } catch (error) {
+  // //   console.log('⚠️ Groq API failed:', error.message);
+  // // }
 
-  // Try Google Gemini (free)
-  try {
-    if (GEMINI_API_KEY) {
-      const result = await callGeminiAPI(systemPrompt, userPrompt);
-      if (result) {
-        console.log('✅ Gemini LLM extraction successful');
-        return result;
-      }
-    }
-  } catch (error) {
-    console.log('⚠️ Gemini API failed:', error.message);
-  }
+  // // Try Hugging Face FIRST (completely free, no rate limits!)
+  // try {
+  //   if (HUGGINGFACE_API_KEY && HUGGINGFACE_API_KEY !== 'hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') {
+  //     console.log('🤖 Trying Hugging Face (may take 10-20s for model loading)...');
+  //     const result = await callHuggingFaceAPI(systemPrompt, userPrompt);
+  //     if (result) {
+  //       console.log('✅ Hugging Face LLM extraction successful');
+  //       return result;
+  //     }
+  //   }
+  // } catch (error) {
+  //   console.log('⚠️ Hugging Face API failed:', error.message);
+  // }
 
-  // Fallback to local Ollama if available
-  try {
-    const result = await callOllamaAPI(systemPrompt, userPrompt);
-    if (result) {
-      console.log('✅ Ollama extraction successful');
-      return result;
-    }
-  } catch (error) {
-    console.log('⚠️ Ollama not available:', error.message);
-  }
+  // // Try Google Gemini (free)
+  // try {
+  //   if (GEMINI_API_KEY) {
+  //     const result = await callGeminiAPI(systemPrompt, userPrompt);
+  //     if (result) {
+  //       console.log('✅ Gemini LLM extraction successful');
+  //       return result;
+  //     }
+  //   }
+  // } catch (error) {
+  //   console.log('⚠️ Gemini API failed:', error.message);
+  // }
 
-  // Final fallback: return empty object
+  // Deepinfra failed - fallback to regex
   console.log('⚠️ LLM parsing failed, using regex fallback');
   return {};
 }
 
-/**
- * Call Groq API with retry and exponential backoff for rate limits
- */
-async function callGroqAPI(systemPrompt, userPrompt, retries = 3) {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${GROQ_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.05,
-          max_tokens: 3000,
-          response_format: { type: 'json_object' }
-        })
-      });
-
-      if (response.status === 429) {
-        // Rate limit - wait and retry with exponential backoff
-        const waitTime = Math.pow(2, attempt) * 5000; // 5s, 10s, 20s
-        console.log(`⏳ Groq rate limit hit. Waiting ${waitTime/1000}s before retry ${attempt + 1}/${retries}...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-        continue; // Retry
-      }
-
-      if (!response.ok) {
-        throw new Error(`Groq API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices[0]?.message?.content || '';
-      
-      return parseJSONFromText(content);
-      
-    } catch (error) {
-      if (attempt === retries - 1) {
-        throw error; // Last attempt failed
-      }
-      console.log(`⚠️ Groq attempt ${attempt + 1} failed, retrying...`);
-    }
-  }
-  
-  throw new Error('Groq API failed after all retries');
-}
-
-/**
- * Call Google Gemini API (FREE tier available)
- * Get key: https://makersuite.google.com/app/apikey
- */
-async function callGeminiAPI(systemPrompt, userPrompt) {
-  const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{
-          text: `${systemPrompt}\n\n${userPrompt}`
-        }]
-      }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 2000
-      }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Gemini API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  
-  // Parse JSON from response
-  return parseJSONFromText(content);
-}
-
-/**
- * Call Hugging Face Inference API via Backend Proxy (avoids CORS)
- * Get FREE API key: https://huggingface.co/settings/tokens
- * Model: Mistral-7B-Instruct (fast, accurate, free)
- */
-async function callHuggingFaceAPI(systemPrompt, userPrompt) {
-  // Call via backend proxy to avoid CORS
-  const API_BASE_URL = window.location.origin;
-  
-  const response = await fetch(`${API_BASE_URL}/api/llm/huggingface`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      prompt: `<s>[INST] ${systemPrompt}\n\n${userPrompt} [/INST]`,
-      apiKey: HUGGINGFACE_API_KEY
-    })
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `Hugging Face API error: ${response.status}`);
-  }
-
-  const result = await response.json();
-  const content = result.data?.[0]?.generated_text || '';
-  
-  // Parse JSON from response
-  return parseJSONFromText(content);
-}
-
-/**
- * Call local Ollama API (completely free, runs locally)
- */
-async function callOllamaAPI(systemPrompt, userPrompt) {
-  const response = await fetch(OLLAMA_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'llama3.1', // or 'mistral', 'phi3', etc.
-      prompt: `${systemPrompt}\n\n${userPrompt}`,
-      stream: false
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Ollama error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return parseJSONFromText(data.response || '');
-}
+// ALL DISABLED API FUNCTIONS REMOVED - Only Deepinfra active
 
 /**
  * Parse JSON from LLM response text - ROBUST VERSION
