@@ -1495,7 +1495,36 @@ const IPQCForm = () => {
     try {
       const checklistId = selectedChecklist._id || selectedChecklist.id || `${selectedChecklist.date}_${selectedChecklist.Line}_${selectedChecklist.Shift}`;
       
-      // Save form data to localStorage
+      // Prepare data for backend
+      const savePayload = {
+        checklist_id: checklistId,
+        date: formData.date || selectedChecklist.date,
+        time: formData.time,
+        shift: formData.shift || selectedChecklist.Shift,
+        line: formData.line || selectedChecklist.Line,
+        po_no: formData.poNo,
+        form_data: formData,
+        checkpoints_data: formData.checkpoints,
+        original_pdf_urls: loadedPdfUrls
+      };
+      
+      // Save to backend database
+      const response = await fetch(`${API_BASE_URL}/forms/save-by-checklist`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(savePayload)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save form to database');
+      }
+      
+      const result = await response.json();
+      console.log('✅ Form saved to database:', result);
+      
+      // Also save to localStorage as backup
       const savedData = {
         checklistId,
         formData: formData,
@@ -1507,7 +1536,6 @@ const IPQCForm = () => {
         savedAt: new Date().toISOString()
       };
       
-      // Store saved form data
       const allSavedForms = JSON.parse(localStorage.getItem('ipqc_saved_forms') || '{}');
       allSavedForms[checklistId] = savedData;
       localStorage.setItem('ipqc_saved_forms', JSON.stringify(allSavedForms));
@@ -1526,10 +1554,26 @@ const IPQCForm = () => {
       
       console.log(`✅ Form saved: ${selectedChecklist.Line} - ${selectedChecklist.Shift}`);
       
-      setEditMode(false); // Exit edit mode after saving
+      setEditMode(false);
       
     } catch (error) {
-      console.error('Error saving form:', error);
+      console.error('❌ Error saving form:', error);
+      // Fallback to localStorage only if backend fails
+      const checklistId = selectedChecklist._id || selectedChecklist.id || `${selectedChecklist.date}_${selectedChecklist.Line}_${selectedChecklist.Shift}`;
+      const savedData = {
+        checklistId,
+        formData: formData,
+        checklistInfo: {
+          date: selectedChecklist.date,
+          line: selectedChecklist.Line,
+          shift: selectedChecklist.Shift
+        },
+        savedAt: new Date().toISOString()
+      };
+      const allSavedForms = JSON.parse(localStorage.getItem('ipqc_saved_forms') || '{}');
+      allSavedForms[checklistId] = savedData;
+      localStorage.setItem('ipqc_saved_forms', JSON.stringify(allSavedForms));
+      console.log('⚠️ Saved to localStorage only (database save failed)');
     } finally {
       setIsSaving(false);
     }
