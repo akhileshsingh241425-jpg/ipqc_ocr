@@ -3405,7 +3405,7 @@ const IPQCForm = () => {
     <div className="ipqc-form-container" ref={formContainerRef} style={{
       height: '100vh',
       width: '100vw',
-      background: 'linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%)',
+      background: '#ffffff',
       padding: '0',
       margin: '0',
       overflow: 'hidden',
@@ -3420,8 +3420,8 @@ const IPQCForm = () => {
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(0,0,0,0.7)',
-          backdropFilter: 'blur(5px)',
+          background: 'rgba(255,255,255,0.95)',
+          backdropFilter: 'blur(10px)',
           zIndex: 99999,
           display: 'flex',
           flexDirection: 'column',
@@ -3430,10 +3430,11 @@ const IPQCForm = () => {
           gap: '20px'
         }}>
           <div style={{
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            background: '#ffffff',
             padding: '40px 60px',
-            borderRadius: '20px',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+            borderRadius: '16px',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+            border: '1px solid #e0e0e0',
             textAlign: 'center',
             animation: 'pulse 2s ease-in-out infinite'
           }}>
@@ -3441,17 +3442,17 @@ const IPQCForm = () => {
               {isLoadingFromAPI ? '📄' : '🔍'}
             </div>
             <h2 style={{ 
-              color: 'white', 
+              color: '#1976d2', 
               margin: '0 0 10px 0',
-              fontSize: '24px',
-              fontWeight: '700'
+              fontSize: '22px',
+              fontWeight: '600'
             }}>
-              {isLoadingFromAPI ? 'PDF Loading...' : 'OCR Processing...'}
+              {isLoadingFromAPI ? 'Loading PDF...' : 'Processing OCR...'}
             </h2>
             <p style={{ 
-              color: 'rgba(255,255,255,0.9)', 
+              color: '#666', 
               margin: '0 0 15px 0',
-              fontSize: '16px'
+              fontSize: '14px'
             }}>
               {ocrProgress.total > 0 
                 ? `Page ${ocrProgress.current} of ${ocrProgress.total}`
@@ -3461,8 +3462,8 @@ const IPQCForm = () => {
             {ocrProgress.total > 0 && (
               <div style={{
                 width: '200px',
-                height: '8px',
-                background: 'rgba(255,255,255,0.2)',
+                height: '6px',
+                background: '#e0e0e0',
                 borderRadius: '10px',
                 overflow: 'hidden',
                 margin: '0 auto'
@@ -3470,7 +3471,7 @@ const IPQCForm = () => {
                 <div style={{
                   width: `${(ocrProgress.current / ocrProgress.total) * 100}%`,
                   height: '100%',
-                  background: 'linear-gradient(90deg, #00ff88, #00d4ff)',
+                  background: '#1976d2',
                   borderRadius: '10px',
                   transition: 'width 0.3s ease'
                 }} />
@@ -3485,10 +3486,10 @@ const IPQCForm = () => {
             }}>
               {[0, 1, 2].map(i => (
                 <div key={i} style={{
-                  width: '12px',
-                  height: '12px',
+                  width: '10px',
+                  height: '10px',
                   borderRadius: '50%',
-                  background: '#00ff88',
+                  background: '#1976d2',
                   animation: `bounce 1.4s infinite ease-in-out both`,
                   animationDelay: `${i * 0.16}s`
                 }} />
@@ -3534,15 +3535,17 @@ const IPQCForm = () => {
           justifyContent: 'space-between', 
           alignItems: 'center', 
           marginBottom: '10px',
-          padding: '10px 15px',
-          background: 'rgba(255,255,255,0.05)',
-          borderRadius: '8px'
+          padding: '12px 20px',
+          background: '#ffffff',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          border: '1px solid #e0e0e0'
         }}>
           <h2 style={{ 
             margin: 0, 
-            color: '#00d4ff', 
-            fontSize: '20px',
-            fontWeight: '700'
+            color: '#1976d2', 
+            fontSize: '18px',
+            fontWeight: '600'
           }}>
             📋 IPQC Checklists ({availableChecklists.length})
           </h2>
@@ -3551,11 +3554,11 @@ const IPQCForm = () => {
             disabled={isLoadingChecklists}
             style={{
               padding: '8px 20px',
-              background: 'linear-gradient(135deg, #00d4ff 0%, #00ff88 100%)',
-              color: '#1a1a2e',
+              background: '#1976d2',
+              color: '#ffffff',
               border: 'none',
               borderRadius: '6px',
-              fontWeight: '700',
+              fontWeight: '600',
               cursor: 'pointer',
               fontSize: '13px'
             }}
@@ -3566,12 +3569,14 @@ const IPQCForm = () => {
         
         {apiError && (
           <div style={{ 
-            background: 'linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%)', 
+            background: '#ffebee', 
             padding: '12px 20px', 
             borderRadius: '8px', 
             marginBottom: '15px', 
             textAlign: 'center',
-            fontWeight: '600'
+            fontWeight: '500',
+            color: '#c62828',
+            border: '1px solid #ef9a9a'
           }}>
             ❌ {apiError}
           </div>
@@ -3584,14 +3589,15 @@ const IPQCForm = () => {
               display: 'flex',
               gap: '10px',
               alignItems: 'center',
-              padding: '8px 15px',
-              background: 'rgba(255,255,255,0.05)',
+              padding: '10px 15px',
+              background: '#ffffff',
               borderRadius: '8px',
               marginBottom: '8px',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid #e0e0e0',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
               flexShrink: 0
             }}>
-              <span style={{ fontWeight: '600', color: '#00d4ff', fontSize: '12px' }}>🔍</span>
+              <span style={{ fontWeight: '600', color: '#1976d2', fontSize: '12px' }}>🔍</span>
               
               {/* Date Filter */}
               <input
@@ -3601,9 +3607,9 @@ const IPQCForm = () => {
                 style={{
                   padding: '6px 10px',
                   borderRadius: '6px',
-                  border: '1px solid rgba(0,212,255,0.3)',
-                  background: 'rgba(255,255,255,0.1)',
-                  color: 'white',
+                  border: '1px solid #ddd',
+                  background: '#fff',
+                  color: '#333',
                   fontSize: '12px',
                   outline: 'none'
                 }}
@@ -3617,9 +3623,9 @@ const IPQCForm = () => {
                 style={{
                   padding: '6px 10px',
                   borderRadius: '6px',
-                  border: '1px solid rgba(0,212,255,0.3)',
-                  background: '#1a1a2e',
-                  color: 'white',
+                  border: '1px solid #ddd',
+                  background: '#fff',
+                  color: '#333',
                   fontSize: '12px',
                   minWidth: '120px',
                   cursor: 'pointer'
@@ -3638,9 +3644,9 @@ const IPQCForm = () => {
                 style={{
                   padding: '6px 10px',
                   borderRadius: '6px',
-                  border: '1px solid rgba(0,212,255,0.3)',
-                  background: '#1a1a2e',
-                  color: 'white',
+                  border: '1px solid #ddd',
+                  background: '#fff',
+                  color: '#333',
                   fontSize: '12px',
                   minWidth: '120px',
                   cursor: 'pointer'
@@ -3661,12 +3667,12 @@ const IPQCForm = () => {
                   }}
                   style={{
                     padding: '5px 10px',
-                    background: '#ff5252',
-                    color: 'white',
-                    border: 'none',
+                    background: '#f5f5f5',
+                    color: '#666',
+                    border: '1px solid #ddd',
                     borderRadius: '6px',
                     cursor: 'pointer',
-                    fontWeight: '600',
+                    fontWeight: '500',
                     fontSize: '11px'
                   }}
                 >
@@ -3677,10 +3683,11 @@ const IPQCForm = () => {
 
             {/* ======== CHECKLIST TABLE - FULL HEIGHT ======== */}
             <div style={{
-              background: 'rgba(255,255,255,0.03)',
+              background: '#ffffff',
               borderRadius: '8px',
               overflow: 'hidden',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid #e0e0e0',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
@@ -3691,10 +3698,10 @@ const IPQCForm = () => {
                 display: 'grid',
                 gridTemplateColumns: '50px 1.5fr 100px 80px 80px 80px 100px 200px',
                 gap: '10px',
-                padding: '10px 15px',
-                background: 'linear-gradient(135deg, #00d4ff 0%, #00ff88 100%)',
-                color: '#1a1a2e',
-                fontWeight: '700',
+                padding: '12px 15px',
+                background: '#1976d2',
+                color: '#ffffff',
+                fontWeight: '600',
                 fontSize: '12px',
                 textTransform: 'uppercase',
                 letterSpacing: '0.3px'
@@ -3738,36 +3745,36 @@ const IPQCForm = () => {
                           display: 'grid',
                           gridTemplateColumns: '50px 1.5fr 100px 80px 80px 80px 100px 200px',
                           gap: '10px',
-                          padding: '8px 15px',
-                          borderBottom: '1px solid rgba(255,255,255,0.05)',
+                          padding: '10px 15px',
+                          borderBottom: '1px solid #f0f0f0',
                           cursor: 'pointer',
                           transition: 'all 0.2s ease',
                           background: isSelected 
-                            ? 'linear-gradient(135deg, rgba(0,212,255,0.2) 0%, rgba(0,255,136,0.2) 100%)' 
-                            : 'transparent',
-                          borderLeft: isSelected ? '3px solid #00d4ff' : '3px solid transparent',
+                            ? '#e3f2fd' 
+                            : '#fff',
+                          borderLeft: isSelected ? '3px solid #1976d2' : '3px solid transparent',
                           fontSize: '12px'
                         }}
                         onMouseEnter={(e) => {
-                          if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                          if (!isSelected) e.currentTarget.style.background = '#fafafa';
                         }}
                         onMouseLeave={(e) => {
-                          if (!isSelected) e.currentTarget.style.background = 'transparent';
+                          if (!isSelected) e.currentTarget.style.background = '#fff';
                         }}
                       >
                         <span style={{ 
-                          color: '#888', 
-                          fontWeight: '700',
+                          color: '#666', 
+                          fontWeight: '600',
                           display: 'flex',
                           alignItems: 'center',
                           fontSize: '12px'
                         }}>{idx + 1}</span>
                         
                         <span style={{ 
-                          fontWeight: '600',
+                          fontWeight: '500',
                           display: 'flex',
                           alignItems: 'center',
-                          color: isSelected ? '#00d4ff' : '#fff',
+                          color: isSelected ? '#1976d2' : '#333',
                           fontSize: '12px'
                         }}>
                           {formatDate(item.date)}
@@ -3778,12 +3785,12 @@ const IPQCForm = () => {
                           alignItems: 'center'
                         }}>
                           <span style={{
-                            background: 'rgba(0,212,255,0.2)',
-                            color: '#00d4ff',
-                            padding: '3px 8px',
-                            borderRadius: '10px',
+                            background: '#e3f2fd',
+                            color: '#1976d2',
+                            padding: '3px 10px',
+                            borderRadius: '12px',
                             fontSize: '11px',
-                            fontWeight: '600'
+                            fontWeight: '500'
                           }}>{item.Line || 'N/A'}</span>
                         </span>
                         
@@ -3793,13 +3800,13 @@ const IPQCForm = () => {
                         }}>
                           <span style={{
                             background: item.Shift === 'Day' 
-                              ? 'linear-gradient(135deg, #f6d365 0%, #fda085 100%)' 
-                              : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                            color: 'white',
-                            padding: '3px 8px',
-                            borderRadius: '10px',
+                              ? '#fff3e0' 
+                              : '#ede7f6',
+                            color: item.Shift === 'Day' ? '#e65100' : '#5e35b1',
+                            padding: '3px 10px',
+                            borderRadius: '12px',
                             fontSize: '10px',
-                            fontWeight: '600',
+                            fontWeight: '500',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '3px'
@@ -3818,15 +3825,19 @@ const IPQCForm = () => {
                             }}>
                               <span style={{
                                 background: ocrStatus.saved 
-                                  ? 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)' 
+                                  ? '#e8f5e9' 
                                   : ocrStatus.processed 
-                                    ? 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)'
-                                    : 'rgba(100,100,100,0.3)',
-                                color: 'white',
-                                padding: '3px 8px',
-                                borderRadius: '10px',
+                                    ? '#fce4ec'
+                                    : '#f5f5f5',
+                                color: ocrStatus.saved 
+                                  ? '#2e7d32' 
+                                  : ocrStatus.processed 
+                                    ? '#c2185b'
+                                    : '#757575',
+                                padding: '3px 10px',
+                                borderRadius: '12px',
                                 fontSize: '10px',
-                                fontWeight: '600',
+                                fontWeight: '500',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '3px'
@@ -3843,21 +3854,21 @@ const IPQCForm = () => {
                         }}>
                           <span style={{
                             background: item.Status === 'Completed' 
-                              ? 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)' 
-                              : 'rgba(255,152,0,0.8)',
-                            color: 'white',
-                            padding: '3px 6px',
-                            borderRadius: '10px',
+                              ? '#e8f5e9' 
+                              : '#fff3e0',
+                            color: item.Status === 'Completed' ? '#2e7d32' : '#e65100',
+                            padding: '3px 8px',
+                            borderRadius: '12px',
                             fontSize: '10px',
-                            fontWeight: '600'
+                            fontWeight: '500'
                           }}>{item.Status === 'Completed' ? '✓' : '⏳'}</span>
                         </span>
                         
                         <span style={{ 
                           display: 'flex',
                           alignItems: 'center',
-                          color: pageCount === 7 ? '#00ff88' : '#ff9800',
-                          fontWeight: '700',
+                          color: pageCount === 7 ? '#2e7d32' : '#e65100',
+                          fontWeight: '500',
                           fontSize: '11px'
                         }}>
                           {pageCount}/7
@@ -3887,15 +3898,14 @@ const IPQCForm = () => {
                                     }
                                   }}
                                   style={{
-                                    padding: '4px 10px',
-                                    background: 'linear-gradient(135deg, #00b09b 0%, #96c93d 100%)',
+                                    padding: '5px 12px',
+                                    background: '#2e7d32',
                                     color: 'white',
                                     border: 'none',
-                                    borderRadius: '5px',
-                                    fontWeight: '600',
+                                    borderRadius: '4px',
+                                    fontWeight: '500',
                                     cursor: 'pointer',
-                                    fontSize: '10px',
-                                    boxShadow: '0 2px 8px rgba(0,176,155,0.4)'
+                                    fontSize: '10px'
                                   }}
                                   title="Open Saved Form"
                                 >
@@ -3912,12 +3922,12 @@ const IPQCForm = () => {
                                   }}
                                   disabled={isLoadingFromAPI}
                                   style={{
-                                    padding: '4px 10px',
-                                    background: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+                                    padding: '5px 12px',
+                                    background: '#1976d2',
                                     color: 'white',
                                     border: 'none',
-                                    borderRadius: '5px',
-                                    fontWeight: '600',
+                                    borderRadius: '4px',
+                                    fontWeight: '500',
                                     cursor: 'pointer',
                                     fontSize: '10px'
                                   }}
@@ -3938,12 +3948,12 @@ const IPQCForm = () => {
                             }}
                             disabled={isLoadingPreviews}
                             style={{
-                              padding: '4px 8px',
-                              background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+                              padding: '4px 10px',
+                              background: '#7b1fa2',
                               color: 'white',
                               border: 'none',
-                              borderRadius: '5px',
-                              fontWeight: '600',
+                              borderRadius: '4px',
+                              fontWeight: '500',
                               cursor: 'pointer',
                               fontSize: '10px'
                             }}
@@ -3961,12 +3971,12 @@ const IPQCForm = () => {
                               setFormViewMode(true); // Open split view mode
                             }}
                             style={{
-                              padding: '4px 8px',
-                              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                              padding: '4px 10px',
+                              background: '#455a64',
                               color: 'white',
                               border: 'none',
-                              borderRadius: '5px',
-                              fontWeight: '600',
+                              borderRadius: '4px',
+                              fontWeight: '500',
                               cursor: 'pointer',
                               fontSize: '10px'
                             }}
