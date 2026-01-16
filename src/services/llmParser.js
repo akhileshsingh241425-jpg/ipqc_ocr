@@ -66,22 +66,23 @@ ${ocrText.substring(0, 4000)}
 
 JSON output:`;
 
-  try {
-    // Try Groq API first (free, fast)
-    if (GROQ_API_KEY) {
-      const result = await callGroqAPI(systemPrompt, userPrompt);
-      if (result) {
-        console.log('✅ Groq LLM extraction successful');
-        return result;
-      }
-    }
-  } catch (error) {
-    console.log('⚠️ Groq API failed:', error.message);
-  }
+  // SKIP GROQ - Rate limited (30 req/min exhausted)
+  // try {
+  //   if (GROQ_API_KEY) {
+  //     const result = await callGroqAPI(systemPrompt, userPrompt);
+  //     if (result) {
+  //       console.log('✅ Groq LLM extraction successful');
+  //       return result;
+  //     }
+  //   }
+  // } catch (error) {
+  //   console.log('⚠️ Groq API failed:', error.message);
+  // }
 
-  // Try Hugging Face (completely free, no rate limits!)
+  // Try Hugging Face FIRST (completely free, no rate limits!)
   try {
     if (HUGGINGFACE_API_KEY && HUGGINGFACE_API_KEY !== 'hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') {
+      console.log('🤖 Trying Hugging Face (may take 10-20s for model loading)...');
       const result = await callHuggingFaceAPI(systemPrompt, userPrompt);
       if (result) {
         console.log('✅ Hugging Face LLM extraction successful');
