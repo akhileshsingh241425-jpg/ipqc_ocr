@@ -14,8 +14,8 @@ const API_BASE_URL = 'https://maintenance.umanerp.com';
 // Proxy URL for PDF files (to bypass CORS in development)
 const PDF_PROXY_URL = '/proxy-pdf';
 
-// LLM Parser Settings
-const USE_LLM_PARSER = true; // With 3 second delay between pages to prevent rate limit
+// LLM Parser Settings  
+const USE_LLM_PARSER = true; // Enabled with Hugging Face (FREE, no rate limits!)
 const GROQ_API_KEY = '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'; // Groq API key
 
 // Utility function for delays

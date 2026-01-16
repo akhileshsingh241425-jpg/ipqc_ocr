@@ -4,7 +4,8 @@
 // ============== FREE API OPTIONS ==============
 // 1. Groq API - FREE, very fast (get key: https://console.groq.com/keys)
 // 2. Google Gemini - FREE tier (get key: https://makersuite.google.com/app/apikey)
-// 3. Ollama - FREE, runs locally (install: https://ollama.ai)
+// 3. Hugging Face - COMPLETELY FREE, no rate limits (get key: https://huggingface.co/settings/tokens)
+// 4. Ollama - FREE, runs locally (install: https://ollama.ai)
 
 import {
   parsePage1,
@@ -16,10 +17,12 @@ import {
   parsePage7,
 } from './ipqcStageParser';
 
-const GROQ_API_KEY = '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'; // Groq API key
-const GEMINI_API_KEY = 'AIzaSyAq3VKTBHO6G47GakorL-imfz19RF3ryh4'; // Google Gemini API key
+const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY || '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';
+const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY || 'AIzaSyAq3VKTBHO6G47GakorL-imfz19RF3ryh4';
+const HUGGINGFACE_API_KEY = process.env.REACT_APP_HUGGINGFACE_API_KEY || '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'; // FREE, NO RATE LIMITS!
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const HUGGINGFACE_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2';
 const OLLAMA_URL = 'http://localhost:11434/api/generate';
 
 /**
@@ -74,6 +77,19 @@ JSON output:`;
     }
   } catch (error) {
     console.log('⚠️ Groq API failed:', error.message);
+  }
+
+  // Try Hugging Face (completely free, no rate limits!)
+  try {
+    if (HUGGINGFACE_API_KEY && HUGGINGFACE_API_KEY !== 'hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') {
+      const result = await callHuggingFaceAPI(systemPrompt, userPrompt);
+      if (result) {
+        console.log('✅ Hugging Face LLM extraction successful');
+        return result;
+      }
+    }
+  } catch (error) {
+    console.log('⚠️ Hugging Face API failed:', error.message);
   }
 
   // Try Google Gemini (free)
@@ -186,6 +202,39 @@ async function callGeminiAPI(systemPrompt, userPrompt) {
 
   const data = await response.json();
   const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  
+  // Parse JSON from response
+  return parseJSONFromText(content);
+}
+
+/**
+ * Call Hugging Face Inference API (COMPLETELY FREE, no rate limits for small models)
+ * Get FREE API key: https://huggingface.co/settings/tokens
+ * Model: Mistral-7B-Instruct (fast, accurate, free)
+ */
+async function callHuggingFaceAPI(systemPrompt, userPrompt) {
+  const response = await fetch(HUGGINGFACE_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      inputs: `<s>[INST] ${systemPrompt}\n\n${userPrompt} [/INST]`,
+      parameters: {
+        max_new_tokens: 2000,
+        temperature: 0.1,
+        return_full_text: false
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Hugging Face API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data[0]?.generated_text || '';
   
   // Parse JSON from response
   return parseJSONFromText(content);
