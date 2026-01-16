@@ -15,7 +15,7 @@ const API_BASE_URL = 'https://maintenance.umanerp.com';
 const PDF_PROXY_URL = '/proxy-pdf';
 
 // LLM Parser Settings
-const USE_LLM_PARSER = true; // Enabled with working Gemini API
+const USE_LLM_PARSER = true; // Enabled with retry + exponential backoff
 const GROQ_API_KEY = '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'; // Groq API key
 
 const IPQCForm = () => {

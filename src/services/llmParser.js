@@ -106,36 +106,55 @@ JSON output:`;
 }
 
 /**
- * Call Groq API (FREE tier available)
+ * Call Groq API with retry and exponential backoff for rate limits
  */
-async function callGroqAPI(systemPrompt, userPrompt) {
-  const response = await fetch(GROQ_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${GROQ_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile', // More accurate model for better JSON output
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.05, // Lower temperature for more consistent JSON
-      max_tokens: 3000,
-      response_format: { type: 'json_object' } // Force JSON output
-    })
-  });
+async function callGroqAPI(systemPrompt, userPrompt, retries = 3) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.05,
+          max_tokens: 3000,
+          response_format: { type: 'json_object' }
+        })
+      });
 
-  if (!response.ok) {
-    throw new Error(`Groq API error: ${response.status}`);
+      if (response.status === 429) {
+        // Rate limit - wait and retry with exponential backoff
+        const waitTime = Math.pow(2, attempt) * 5000; // 5s, 10s, 20s
+        console.log(`⏳ Groq rate limit hit. Waiting ${waitTime/1000}s before retry ${attempt + 1}/${retries}...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue; // Retry
+      }
+
+      if (!response.ok) {
+        throw new Error(`Groq API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices[0]?.message?.content || '';
+      
+      return parseJSONFromText(content);
+      
+    } catch (error) {
+      if (attempt === retries - 1) {
+        throw error; // Last attempt failed
+      }
+      console.log(`⚠️ Groq attempt ${attempt + 1} failed, retrying...`);
+    }
   }
-
-  const data = await response.json();
-  const content = data.choices[0]?.message?.content || '';
   
-  // Parse JSON from response
-  return parseJSONFromText(content);
+  throw new Error('Groq API failed after all retries');
 }
 
 /**
