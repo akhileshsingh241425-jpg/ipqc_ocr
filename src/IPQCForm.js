@@ -248,7 +248,6 @@ const IPQCForm = () => {
       const uniquePdfPages = [...new Set(pdfPages)];
       if (uniquePdfPages.length !== pdfPages.length) {
         console.log(`⚠️ WARNING: Found ${pdfPages.length - uniquePdfPages.length} duplicate PDF pages! Removing duplicates...`);
-        alert(`⚠️ ${pdfPages.length - uniquePdfPages.length} duplicate PDF pages detected and removed!`);
       }
 
       console.log('📄 Loading', uniquePdfPages.length, 'unique PDF pages from API...');
@@ -371,7 +370,7 @@ const IPQCForm = () => {
         
         const duplicatesRemoved = pdfPages.length - uniquePdfPages.length;
         const duplicateMsg = duplicatesRemoved > 0 ? `\n\n⚠️ ${duplicatesRemoved} duplicate pages removed automatically!` : '';
-        alert(`✅ Successfully processed ${successCount}/${uniquePdfPages.length} unique pages!${duplicateMsg}\n\n🚫 No fake/default data applied - only actual OCR extracted values used.\n\n📋 Split View: Left side = Form (editable) | Right side = Original PDF\n\n✏️ Edit Mode: ON - You can now edit the form data\n💾 Click 'Save PDF' when done editing!`);
+        console.log(`✅ Successfully processed ${successCount}/${uniquePdfPages.length} unique pages!`);
       } else {
         throw new Error('Could not process any PDF pages');
       }
@@ -451,11 +450,9 @@ const IPQCForm = () => {
       }
       
       console.log('✅ All PDF previews loaded');
-      alert(`✅ ${previews.length} PDF pages loaded!\n\n👀 Dekho konsa page kya content hai\n🔢 Click on page to process that single page\n\n📌 API Page 1 = Form ka konsa section? Check karo!`);
       
     } catch (error) {
       console.error('Error loading PDF previews:', error);
-      alert('❌ Error loading previews: ' + error.message);
     } finally {
       setIsLoadingPreviews(false);
     }
@@ -464,7 +461,7 @@ const IPQCForm = () => {
   // Process ONLY selected preview page
   const processPreviewPage = async (pageIndex) => {
     if (!selectedChecklist) {
-      alert('⚠️ Pehle checklist select karo!');
+      console.log('⚠️ Please select checklist first');
       return;
     }
 
@@ -530,11 +527,10 @@ const IPQCForm = () => {
       }
       
       setShowDebug(true);
-      alert(`✅ API Page ${pageNumber} processed!\n\n📋 Check Console (F12) for full OCR text\n\n❓ Is this Page ${pageNumber} of your IPQC form?\n\nIf not, note down which form page this corresponds to!`);
+      console.log(`✅ API Page ${pageNumber} processed`);
       
     } catch (error) {
       console.error(`❌ Error:`, error);
-      alert(`❌ Error: ${error.message}`);
     } finally {
       setSinglePageProcessing(false);
       setSelectedPreviewPage(null);
@@ -545,7 +541,7 @@ const IPQCForm = () => {
   // Process ONLY selected page for detailed debugging
   const processSelectedPageOnly = async () => {
     if (!selectedChecklist) {
-      alert('⚠️ Pehle Server se checklist load karo!');
+      console.log('⚠️ Please load checklist from server first');
       return;
     }
 
@@ -561,7 +557,7 @@ const IPQCForm = () => {
     ].filter(Boolean);
 
     if (pageNumber > pdfPages.length) {
-      alert(`⚠️ Page ${pageNumber} available nahi hai! Total pages: ${pdfPages.length}`);
+      console.log(`⚠️ Page ${pageNumber} not available. Total pages: ${pdfPages.length}`);
       return;
     }
 
@@ -609,11 +605,10 @@ const IPQCForm = () => {
       setShowDebug(true);
       setShowOcrReport(true);
       
-      alert(`✅ Page ${pageNumber} processed!\n\n📋 Check Console (F12) for:\n- Full OCR text\n- LLM response\n- Parsed fields\n\n📊 Debug Panel shows all extracted data`);
+      console.log(`✅ Page ${pageNumber} processed`);
       
     } catch (error) {
       console.error(`❌ Error processing page ${pageNumber}:`, error);
-      alert(`❌ Error: ${error.message}`);
     } finally {
       setSinglePageProcessing(false);
     }
@@ -1491,7 +1486,7 @@ const IPQCForm = () => {
   // ========== SAVE EDITED FORM DATA ==========
   const saveEditedForm = async () => {
     if (!selectedChecklist) {
-      alert('❌ No checklist selected!');
+      console.log('❌ No checklist selected');
       return;
     }
 
@@ -1529,13 +1524,12 @@ const IPQCForm = () => {
       setProcessedChecklists(updatedProcessed);
       localStorage.setItem('ipqc_processed_checklists', JSON.stringify(updatedProcessed));
       
-      alert(`✅ Form saved successfully!\n\n📋 Checklist: ${selectedChecklist.Line} - ${selectedChecklist.Shift}\n📅 Date: ${formatDate(selectedChecklist.date)}\n⏰ Saved at: ${new Date().toLocaleString()}`);
+      console.log(`✅ Form saved: ${selectedChecklist.Line} - ${selectedChecklist.Shift}`);
       
       setEditMode(false); // Exit edit mode after saving
       
     } catch (error) {
       console.error('Error saving form:', error);
-      alert('❌ Failed to save form: ' + error.message);
     } finally {
       setIsSaving(false);
     }
@@ -1712,7 +1706,7 @@ const IPQCForm = () => {
 
   const saveToLocalStorage = () => {
     localStorage.setItem('ipqcFormData', JSON.stringify(formData));
-    alert('IPQC Form saved successfully!');
+    console.log('IPQC Form saved to localStorage');
   };
 
   const exportToJSON = () => {
@@ -1866,10 +1860,9 @@ const IPQCForm = () => {
       if (actionButtons) actionButtons.style.display = '';
       element.classList.remove('pdf-export-mode');
       
-      alert('PDF generated successfully!');
+      console.log('PDF generated successfully');
     } catch (error) {
       console.error('Error generating PDF:', error);
-      alert('Error generating PDF: ' + error.message);
       
       // Try to restore inputs on error
       try {
@@ -2216,11 +2209,10 @@ const IPQCForm = () => {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
       
-      alert(`✅ Excel file exported successfully!\n\nFilename: ${filename}\n\nCells filled: ${filledCount}\n\n📋 Features preserved:\n• Column widths & Row heights\n• Merged cells\n• Borders & Colors\n• Text alignment & Wrap\n• Fonts & Styles\n• Everything A to Z!\n\nCheck browser console (F12) for detailed logs.`);
+      console.log(`✅ Excel exported: ${filename}, Cells filled: ${filledCount}`);
       
     } catch (error) {
       console.error('Error exporting to Excel:', error);
-      alert(`❌ Error exporting to Excel:\n\n${error.message}\n\nMake sure "IPQC Check Sheet.xlsx" is placed in the public folder.`);
     } finally {
       setIsExportingExcel(false);
     }
@@ -2299,11 +2291,10 @@ const IPQCForm = () => {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
       
-      alert('🧪 TEST Excel exported!\n\nCheck the file - it should have:\n• Date: 2026-01-16\n• Time: 10:30\n• Shift: Day\n• Temperature: 25.5°C\n• Humidity: 45%\n\nIf data appears, Excel writing works!');
+      console.log('🧪 TEST Excel exported with test data');
       
     } catch (error) {
       console.error('Test export error:', error);
-      alert('❌ Test failed: ' + error.message);
     } finally {
       setIsExportingExcel(false);
     }
@@ -2335,11 +2326,10 @@ const IPQCForm = () => {
       
       console.log('🤖 LLM Mappings Used:', result.mappings);
       
-      alert(`✅ Smart Excel Export Complete!\n\nFilename: ${result.filename}\n\n🤖 AI analyzed Excel structure and mapped ${result.mappings.length} cells intelligently.\n\n📋 All formatting preserved:\n• Column widths & Row heights\n• Merged cells & Borders\n• Text alignment & Wrap\n• Colors & Fonts`);
+      console.log(`✅ Smart Excel Export Complete: ${result.filename}`);
       
     } catch (error) {
       console.error('Smart Export Error:', error);
-      alert(`❌ Smart Export Error:\n\n${error.message}`);
     } finally {
       setIsSmartExporting(false);
       setExportProgress('');
@@ -2370,7 +2360,6 @@ const IPQCForm = () => {
           console.log(`Page ${i + 1} OCR completed`);
         } catch (err) {
           console.error(`Error processing file ${i + 1}:`, err);
-          alert(`❌ Error on page ${i + 1}: ${err.message}`);
         }
       }
 
@@ -2379,10 +2368,9 @@ const IPQCForm = () => {
       // Parse and update form with all extracted data
       parseAndUpdateForm(allExtractedText);
       
-      alert(`✅ OCR completed! Processed ${files.length} page(s). Form updated with extracted data.`);
+      console.log(`✅ OCR completed! Processed ${files.length} page(s)`);
     } catch (err) {
       console.error('Upload Error:', err);
-      alert('Upload Error: ' + err.message);
     } finally {
       setIsProcessingOCR(false);
       setOcrProgress({ current: 0, total: 0 });
@@ -2836,12 +2824,108 @@ const IPQCForm = () => {
         left: 0,
         right: 0,
         bottom: 0,
-        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+        background: 'linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%)',
         zIndex: 9999,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden'
       }}>
+        {/* ========== FRIENDLY OCR LOADING OVERLAY (Split View) ========== */}
+        {(isProcessingOCR || isLoadingFromAPI || singlePageProcessing || isGeneratingPDF || isExportingExcel) && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.7)',
+            backdropFilter: 'blur(5px)',
+            zIndex: 999999,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '20px'
+          }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              padding: '40px 60px',
+              borderRadius: '20px',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+              textAlign: 'center',
+              animation: 'pulse 2s ease-in-out infinite'
+            }}>
+              <div style={{ fontSize: '60px', marginBottom: '15px' }}>
+                {isGeneratingPDF ? '📄' : isExportingExcel ? '📊' : isLoadingFromAPI ? '📄' : '🔍'}
+              </div>
+              <h2 style={{ 
+                color: 'white', 
+                margin: '0 0 10px 0',
+                fontSize: '24px',
+                fontWeight: '700'
+              }}>
+                {isGeneratingPDF ? 'Generating PDF...' : isExportingExcel ? 'Exporting Excel...' : isLoadingFromAPI ? 'Loading PDF...' : 'OCR Processing...'}
+              </h2>
+              <p style={{ 
+                color: 'rgba(255,255,255,0.9)', 
+                margin: '0 0 15px 0',
+                fontSize: '16px'
+              }}>
+                {ocrProgress.total > 0 
+                  ? `Page ${ocrProgress.current} of ${ocrProgress.total}`
+                  : 'Please wait...'}
+              </p>
+              {/* Progress Bar */}
+              {ocrProgress.total > 0 && (
+                <div style={{
+                  width: '200px',
+                  height: '8px',
+                  background: 'rgba(255,255,255,0.2)',
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                  margin: '0 auto'
+                }}>
+                  <div style={{
+                    width: `${(ocrProgress.current / ocrProgress.total) * 100}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #00ff88, #00d4ff)',
+                    borderRadius: '10px',
+                    transition: 'width 0.3s ease'
+                  }} />
+                </div>
+              )}
+              {/* Animated Dots */}
+              <div style={{ 
+                marginTop: '15px',
+                display: 'flex',
+                justifyContent: 'center',
+                gap: '8px'
+              }}>
+                {[0, 1, 2].map(i => (
+                  <div key={i} style={{
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    background: '#00ff88',
+                    animation: `bounce 1.4s infinite ease-in-out both`,
+                    animationDelay: `${i * 0.16}s`
+                  }} />
+                ))}
+              </div>
+            </div>
+            <style>{`
+              @keyframes pulse {
+                0%, 100% { transform: scale(1); }
+                50% { transform: scale(1.02); }
+              }
+              @keyframes bounce {
+                0%, 80%, 100% { transform: scale(0); }
+                40% { transform: scale(1); }
+              }
+            `}</style>
+          </div>
+        )}
+
         {/* Top Bar */}
         <div style={{
           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -3219,109 +3303,59 @@ const IPQCForm = () => {
           </div>
         </div>
 
-        {/* ========== FOOTER WITH ALL BUTTONS ========== */}
+        {/* ========== FOOTER WITH ESSENTIAL BUTTONS ONLY ========== */}
         <div style={{
-          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
           padding: '10px 20px',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          gap: '8px',
+          gap: '12px',
           flexWrap: 'wrap',
-          borderTop: '2px solid rgba(102,126,234,0.3)',
-          boxShadow: '0 -4px 20px rgba(0,0,0,0.3)'
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.15)'
         }}>
-          {/* Writer/Person Info Badge */}
-          {useHandwritingFont && getCurrentWriterInfo() && (
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '6px',
-              background: 'rgba(0,0,0,0.3)',
-              padding: '6px 12px',
-              borderRadius: '15px',
-              border: `2px solid ${getCurrentWriterInfo().color}`
-            }}>
-              <span style={{ fontSize: '14px' }}>👤</span>
-              <span style={{ color: 'white', fontSize: '10px', fontWeight: '600' }}>
-                Writer #{getCurrentWriterInfo().personNum}
-              </span>
-              <div style={{
-                width: '10px',
-                height: '10px',
-                borderRadius: '50%',
-                background: getCurrentWriterInfo().color
-              }}></div>
-            </div>
-          )}
-          
           {/* Handwriting Toggle */}
           <label style={{ 
             display: 'flex', 
             alignItems: 'center', 
-            gap: '5px',
+            gap: '6px',
             cursor: 'pointer',
-            background: useHandwritingFont ? 'rgba(0,255,136,0.2)' : 'rgba(255,255,255,0.1)',
-            padding: '6px 12px',
-            borderRadius: '15px',
-            border: useHandwritingFont ? '2px solid #00ff88' : '2px solid transparent'
+            background: useHandwritingFont ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
+            padding: '8px 14px',
+            borderRadius: '20px',
+            border: useHandwritingFont ? '2px solid #fff' : '2px solid transparent'
           }}>
             <span style={{ fontSize: '14px' }}>✍️</span>
-            <span style={{ color: 'white', fontSize: '10px', fontWeight: '600' }}>
-              {useHandwritingFont ? 'ON' : 'OFF'}
+            <span style={{ color: 'white', fontSize: '11px', fontWeight: '600' }}>
+              Handwriting {useHandwritingFont ? 'ON' : 'OFF'}
             </span>
             <input
               type="checkbox"
               checked={useHandwritingFont}
               onChange={(e) => setUseHandwritingFont(e.target.checked)}
-              style={{ width: '14px', height: '14px', accentColor: '#00ff88' }}
-            />
-          </label>
-
-          {/* Edit Mode Toggle */}
-          <label style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '5px',
-            cursor: 'pointer',
-            background: editMode ? 'rgba(255,152,0,0.3)' : 'rgba(255,255,255,0.1)',
-            padding: '6px 12px',
-            borderRadius: '15px',
-            border: editMode ? '2px solid #ff9800' : '2px solid transparent'
-          }}>
-            <span style={{ fontSize: '14px' }}>{editMode ? '✏️' : '👁️'}</span>
-            <span style={{ color: 'white', fontSize: '10px', fontWeight: '600' }}>
-              {editMode ? 'Edit' : 'View'}
-            </span>
-            <input
-              type="checkbox"
-              checked={editMode}
-              onChange={(e) => setEditMode(e.target.checked)}
-              style={{ width: '14px', height: '14px', accentColor: '#ff9800' }}
+              style={{ width: '16px', height: '16px', accentColor: '#00ff88' }}
             />
           </label>
           
           {/* Save Button */}
           <button
             onClick={saveEditedForm}
-            disabled={isSaving || !editMode}
+            disabled={isSaving}
             style={{
-              padding: '8px 16px',
+              padding: '10px 24px',
               background: isSaving 
-                ? 'linear-gradient(135deg, #666 0%, #888 100%)'
-                : editMode 
-                  ? 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)'
-                  : 'rgba(100,100,100,0.5)',
+                ? 'rgba(255,255,255,0.3)'
+                : 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
               color: 'white',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: '20px',
               fontWeight: '700',
-              cursor: isSaving || !editMode ? 'not-allowed' : 'pointer',
-              fontSize: '12px',
-              opacity: editMode ? 1 : 0.6
+              cursor: isSaving ? 'not-allowed' : 'pointer',
+              fontSize: '13px',
+              boxShadow: '0 4px 15px rgba(17,153,142,0.4)'
             }}
           >
-            {isSaving ? '⏳...' : '💾 Save'}
+            {isSaving ? '⏳ Saving...' : '💾 Save Form'}
           </button>
 
           {/* Export PDF */}
@@ -3329,17 +3363,18 @@ const IPQCForm = () => {
             onClick={exportToPDF}
             disabled={isGeneratingPDF}
             style={{
-              padding: '8px 16px',
+              padding: '10px 24px',
               background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
               color: 'white',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: '20px',
               fontWeight: '700',
               cursor: 'pointer',
-              fontSize: '12px'
+              fontSize: '13px',
+              boxShadow: '0 4px 15px rgba(240,147,251,0.4)'
             }}
           >
-            {isGeneratingPDF ? '⏳...' : '📄 PDF'}
+            {isGeneratingPDF ? '⏳...' : '📄 Export PDF'}
           </button>
 
           {/* Export Excel */}
@@ -3347,72 +3382,18 @@ const IPQCForm = () => {
             onClick={exportToExcel}
             disabled={isExportingExcel}
             style={{
-              padding: '8px 16px',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              fontWeight: '700',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            {isExportingExcel ? '⏳...' : '📊 Excel'}
-          </button>
-
-          {/* Test Excel */}
-          <button
-            onClick={testExportToExcel}
-            disabled={isExportingExcel}
-            style={{
-              padding: '8px 16px',
+              padding: '10px 24px',
               background: 'linear-gradient(135deg, #00b09b 0%, #96c93d 100%)',
               color: 'white',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: '20px',
               fontWeight: '700',
               cursor: 'pointer',
-              fontSize: '12px'
+              fontSize: '13px',
+              boxShadow: '0 4px 15px rgba(0,176,155,0.4)'
             }}
           >
-            🧪 Test
-          </button>
-
-          {/* AI Smart Excel */}
-          <button
-            onClick={smartExportToExcel}
-            disabled={isSmartExporting}
-            style={{
-              padding: '8px 16px',
-              background: isSmartExporting 
-                ? 'linear-gradient(135deg, #666 0%, #888 100%)'
-                : 'linear-gradient(135deg, #f857a6 0%, #ff5858 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              fontWeight: '700',
-              cursor: isSmartExporting ? 'wait' : 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            {isSmartExporting ? `🤖 ${exportProgress}` : '🤖 AI Excel'}
-          </button>
-
-          {/* Export JSON */}
-          <button
-            onClick={exportToJSON}
-            style={{
-              padding: '8px 16px',
-              background: 'linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)',
-              color: '#333',
-              border: 'none',
-              borderRadius: '8px',
-              fontWeight: '700',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            📥 JSON
+            {isExportingExcel ? '⏳...' : '📊 Export Excel'}
           </button>
         </div>
       </div>
@@ -3424,13 +3405,109 @@ const IPQCForm = () => {
     <div className="ipqc-form-container" ref={formContainerRef} style={{
       height: '100vh',
       width: '100vw',
-      background: 'linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%)',
+      background: 'linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%)',
       padding: '0',
       margin: '0',
       overflow: 'hidden',
       display: 'flex',
       flexDirection: 'column'
     }}>
+      {/* ========== FRIENDLY OCR LOADING OVERLAY ========== */}
+      {(isProcessingOCR || isLoadingFromAPI || singlePageProcessing) && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.7)',
+          backdropFilter: 'blur(5px)',
+          zIndex: 99999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '20px'
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            padding: '40px 60px',
+            borderRadius: '20px',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+            textAlign: 'center',
+            animation: 'pulse 2s ease-in-out infinite'
+          }}>
+            <div style={{ fontSize: '60px', marginBottom: '15px' }}>
+              {isLoadingFromAPI ? '📄' : '🔍'}
+            </div>
+            <h2 style={{ 
+              color: 'white', 
+              margin: '0 0 10px 0',
+              fontSize: '24px',
+              fontWeight: '700'
+            }}>
+              {isLoadingFromAPI ? 'PDF Loading...' : 'OCR Processing...'}
+            </h2>
+            <p style={{ 
+              color: 'rgba(255,255,255,0.9)', 
+              margin: '0 0 15px 0',
+              fontSize: '16px'
+            }}>
+              {ocrProgress.total > 0 
+                ? `Page ${ocrProgress.current} of ${ocrProgress.total}`
+                : 'Please wait...'}
+            </p>
+            {/* Progress Bar */}
+            {ocrProgress.total > 0 && (
+              <div style={{
+                width: '200px',
+                height: '8px',
+                background: 'rgba(255,255,255,0.2)',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                margin: '0 auto'
+              }}>
+                <div style={{
+                  width: `${(ocrProgress.current / ocrProgress.total) * 100}%`,
+                  height: '100%',
+                  background: 'linear-gradient(90deg, #00ff88, #00d4ff)',
+                  borderRadius: '10px',
+                  transition: 'width 0.3s ease'
+                }} />
+              </div>
+            )}
+            {/* Animated Dots */}
+            <div style={{ 
+              marginTop: '15px',
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '8px'
+            }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '50%',
+                  background: '#00ff88',
+                  animation: `bounce 1.4s infinite ease-in-out both`,
+                  animationDelay: `${i * 0.16}s`
+                }} />
+              ))}
+            </div>
+          </div>
+          <style>{`
+            @keyframes pulse {
+              0%, 100% { transform: scale(1); }
+              50% { transform: scale(1.02); }
+            }
+            @keyframes bounce {
+              0%, 80%, 100% { transform: scale(0); }
+              40% { transform: scale(1); }
+            }
+          `}</style>
+        </div>
+      )}
+
       {/* Hidden OCR Upload Input */}
       <input
         type="file"
@@ -3806,7 +3883,7 @@ const IPQCForm = () => {
                                       loadPdfPreviews(item);
                                       setFormViewMode(true);
                                     } else {
-                                      alert('❌ Could not load saved form');
+                                      console.log('❌ Could not load saved form');
                                     }
                                   }}
                                   style={{
