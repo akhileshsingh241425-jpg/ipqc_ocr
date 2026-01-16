@@ -75,6 +75,55 @@ app.get('/proxy-pdf/*', async (req, res) => {
 });
 
 // ========== API PROXY to maintenance.umanerp.com ==========
+// POST requests proxy
+app.post('/api/peelTest/*', async (req, res) => {
+  try {
+    const apiPath = req.path;
+    const targetUrl = `https://maintenance.umanerp.com${apiPath}`;
+    
+    console.log(`🔄 Proxying API POST: ${targetUrl}`);
+    
+    const postData = JSON.stringify(req.body);
+    const url = new URL(targetUrl);
+    
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+    
+    const proxyReq = https.request(options, (proxyRes) => {
+      res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'application/json');
+      
+      let data = '';
+      proxyRes.on('data', chunk => data += chunk);
+      proxyRes.on('end', () => {
+        try {
+          res.status(proxyRes.statusCode).json(JSON.parse(data));
+        } catch (e) {
+          res.status(proxyRes.statusCode).send(data);
+        }
+      });
+    });
+    
+    proxyReq.on('error', (err) => {
+      console.error('❌ API POST Proxy Error:', err.message);
+      res.status(500).json({ error: 'Failed to proxy POST request' });
+    });
+    
+    proxyReq.write(postData);
+    proxyReq.end();
+  } catch (error) {
+    console.error('❌ API POST Proxy Error:', error);
+    res.status(500).json({ error: 'Failed to proxy POST request' });
+  }
+});
+
+// GET requests proxy
 app.get('/api/peelTest/*', async (req, res) => {
   try {
     const apiPath = req.path;
