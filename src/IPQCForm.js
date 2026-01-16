@@ -2849,223 +2849,32 @@ const IPQCForm = () => {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          padding: '8px 20px',
+          minHeight: 'auto'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
             <button
               onClick={() => setFormViewMode(false)}
               style={{
-                padding: '10px 20px',
+                padding: '8px 16px',
                 background: 'rgba(255,255,255,0.2)',
                 color: 'white',
                 border: 'none',
                 borderRadius: '8px',
                 fontWeight: '700',
                 cursor: 'pointer',
-                fontSize: '14px',
+                fontSize: '13px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px'
+                gap: '6px'
               }}
             >
-              ← Back to List
+              ← Back
             </button>
-            <span style={{ color: 'white', fontWeight: '700', fontSize: '16px' }}>
-              📋 IPQC Form View | {selectedChecklist ? `${formatDate(selectedChecklist.date)} - ${selectedChecklist.Shift} Shift - ${selectedChecklist.Line}` : 'No checklist selected'}
+            <span style={{ color: 'white', fontWeight: '700', fontSize: '14px' }}>
+              📋 {selectedChecklist ? `${formatDate(selectedChecklist.date)} | ${selectedChecklist.Shift} | ${selectedChecklist.Line}` : ''}
             </span>
-          </div>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            {/* Writer/Person Info Badge - Shows which "person" filled this form */}
-            {useHandwritingFont && getCurrentWriterInfo() && (
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '8px',
-                background: 'rgba(0,0,0,0.3)',
-                padding: '8px 15px',
-                borderRadius: '20px',
-                border: `2px solid ${getCurrentWriterInfo().color}`
-              }}>
-                <span style={{ fontSize: '18px' }}>👤</span>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ 
-                    color: 'white', 
-                    fontSize: '11px', 
-                    fontWeight: '700',
-                    fontFamily: `'${handwritingFonts[Math.abs(String(selectedChecklist?.checkListId || '').split('').reduce((a,c) => c.charCodeAt(0) + ((a << 5) - a), 0)) % handwritingFonts.length].name}', cursive`
-                  }}>
-                    Writer #{getCurrentWriterInfo().personNum}
-                  </div>
-                  <div style={{ color: '#aaa', fontSize: '9px' }}>
-                    {getCurrentWriterInfo().font.split(' (')[0]}
-                  </div>
-                </div>
-                <div style={{
-                  width: '12px',
-                  height: '12px',
-                  borderRadius: '50%',
-                  background: getCurrentWriterInfo().color,
-                  boxShadow: `0 0 8px ${getCurrentWriterInfo().color}`
-                }}></div>
-              </div>
-            )}
-            
-            {/* Handwriting Toggle */}
-            <label style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '6px',
-              cursor: 'pointer',
-              background: useHandwritingFont ? 'rgba(0,255,136,0.2)' : 'rgba(255,255,255,0.1)',
-              padding: '8px 15px',
-              borderRadius: '20px',
-              border: useHandwritingFont ? '2px solid #00ff88' : '2px solid transparent'
-            }}>
-              <span style={{ fontSize: '16px' }}>✍️</span>
-              <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>
-                {useHandwritingFont ? 'Handwriting ON' : 'Handwriting OFF'}
-              </span>
-              <input
-                type="checkbox"
-                checked={useHandwritingFont}
-                onChange={(e) => setUseHandwritingFont(e.target.checked)}
-                style={{ width: '16px', height: '16px', accentColor: '#00ff88' }}
-              />
-            </label>
-
-            {/* Edit Mode Toggle */}
-            <label style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '6px',
-              cursor: 'pointer',
-              background: editMode ? 'rgba(255,152,0,0.3)' : 'rgba(255,255,255,0.1)',
-              padding: '8px 15px',
-              borderRadius: '20px',
-              border: editMode ? '2px solid #ff9800' : '2px solid transparent'
-            }}>
-              <span style={{ fontSize: '16px' }}>{editMode ? '✏️' : '👁️'}</span>
-              <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>
-                {editMode ? 'Edit Mode ON' : 'View Only'}
-              </span>
-              <input
-                type="checkbox"
-                checked={editMode}
-                onChange={(e) => setEditMode(e.target.checked)}
-                style={{ width: '16px', height: '16px', accentColor: '#ff9800' }}
-              />
-            </label>
-            
-            {/* Save Edited Form Button */}
-            <button
-              onClick={saveEditedForm}
-              disabled={isSaving || !editMode}
-              style={{
-                padding: '10px 25px',
-                background: isSaving 
-                  ? 'linear-gradient(135deg, #666 0%, #888 100%)'
-                  : editMode 
-                    ? 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)'
-                    : 'rgba(100,100,100,0.5)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontWeight: '700',
-                cursor: isSaving || !editMode ? 'not-allowed' : 'pointer',
-                fontSize: '14px',
-                boxShadow: editMode ? '0 4px 15px rgba(17,153,142,0.4)' : 'none',
-                opacity: editMode ? 1 : 0.6
-              }}
-              title={editMode ? 'Save your changes' : 'Enable Edit Mode to save'}
-            >
-              {isSaving ? '⏳ Saving...' : '💾 Save Form'}
-            </button>
-            <button
-              onClick={exportToPDF}
-              disabled={isGeneratingPDF}
-              style={{
-                padding: '10px 25px',
-                background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                fontSize: '14px'
-              }}
-            >
-              {isGeneratingPDF ? '⏳...' : '📄 Export PDF'}
-            </button>
-            <button
-              onClick={exportToExcel}
-              disabled={isExportingExcel}
-              style={{
-                padding: '10px 25px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                fontSize: '14px',
-                boxShadow: '0 4px 15px rgba(102,126,234,0.4)'
-              }}
-            >
-              {isExportingExcel ? '⏳...' : '📊 Export Excel'}
-            </button>
-            <button
-              onClick={testExportToExcel}
-              disabled={isExportingExcel}
-              style={{
-                padding: '10px 25px',
-                background: 'linear-gradient(135deg, #00b09b 0%, #96c93d 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                fontSize: '14px'
-              }}
-              title="Test with dummy data to verify Excel export works"
-            >
-              🧪 Test Excel
-            </button>
-            <button
-              onClick={smartExportToExcel}
-              disabled={isSmartExporting}
-              style={{
-                padding: '10px 25px',
-                background: isSmartExporting 
-                  ? 'linear-gradient(135deg, #666 0%, #888 100%)'
-                  : 'linear-gradient(135deg, #f857a6 0%, #ff5858 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontWeight: '700',
-                cursor: isSmartExporting ? 'wait' : 'pointer',
-                fontSize: '14px',
-                boxShadow: '0 4px 15px rgba(248,87,166,0.4)',
-                position: 'relative'
-              }}
-              title="Uses AI to intelligently map form data to Excel cells"
-            >
-              {isSmartExporting ? `🤖 ${exportProgress}` : '🤖 AI Smart Excel'}
-            </button>
-            <button
-              onClick={exportToJSON}
-              style={{
-                padding: '10px 25px',
-                background: 'linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)',
-                color: '#333',
-                border: 'none',
-                borderRadius: '8px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                fontSize: '14px'
-              }}
-            >
-              📥 Export JSON
-            </button>
           </div>
         </div>
 
@@ -3408,6 +3217,203 @@ const IPQCForm = () => {
               </div>
             )}
           </div>
+        </div>
+
+        {/* ========== FOOTER WITH ALL BUTTONS ========== */}
+        <div style={{
+          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+          padding: '10px 20px',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: '8px',
+          flexWrap: 'wrap',
+          borderTop: '2px solid rgba(102,126,234,0.3)',
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.3)'
+        }}>
+          {/* Writer/Person Info Badge */}
+          {useHandwritingFont && getCurrentWriterInfo() && (
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '6px',
+              background: 'rgba(0,0,0,0.3)',
+              padding: '6px 12px',
+              borderRadius: '15px',
+              border: `2px solid ${getCurrentWriterInfo().color}`
+            }}>
+              <span style={{ fontSize: '14px' }}>👤</span>
+              <span style={{ color: 'white', fontSize: '10px', fontWeight: '600' }}>
+                Writer #{getCurrentWriterInfo().personNum}
+              </span>
+              <div style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background: getCurrentWriterInfo().color
+              }}></div>
+            </div>
+          )}
+          
+          {/* Handwriting Toggle */}
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '5px',
+            cursor: 'pointer',
+            background: useHandwritingFont ? 'rgba(0,255,136,0.2)' : 'rgba(255,255,255,0.1)',
+            padding: '6px 12px',
+            borderRadius: '15px',
+            border: useHandwritingFont ? '2px solid #00ff88' : '2px solid transparent'
+          }}>
+            <span style={{ fontSize: '14px' }}>✍️</span>
+            <span style={{ color: 'white', fontSize: '10px', fontWeight: '600' }}>
+              {useHandwritingFont ? 'ON' : 'OFF'}
+            </span>
+            <input
+              type="checkbox"
+              checked={useHandwritingFont}
+              onChange={(e) => setUseHandwritingFont(e.target.checked)}
+              style={{ width: '14px', height: '14px', accentColor: '#00ff88' }}
+            />
+          </label>
+
+          {/* Edit Mode Toggle */}
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '5px',
+            cursor: 'pointer',
+            background: editMode ? 'rgba(255,152,0,0.3)' : 'rgba(255,255,255,0.1)',
+            padding: '6px 12px',
+            borderRadius: '15px',
+            border: editMode ? '2px solid #ff9800' : '2px solid transparent'
+          }}>
+            <span style={{ fontSize: '14px' }}>{editMode ? '✏️' : '👁️'}</span>
+            <span style={{ color: 'white', fontSize: '10px', fontWeight: '600' }}>
+              {editMode ? 'Edit' : 'View'}
+            </span>
+            <input
+              type="checkbox"
+              checked={editMode}
+              onChange={(e) => setEditMode(e.target.checked)}
+              style={{ width: '14px', height: '14px', accentColor: '#ff9800' }}
+            />
+          </label>
+          
+          {/* Save Button */}
+          <button
+            onClick={saveEditedForm}
+            disabled={isSaving || !editMode}
+            style={{
+              padding: '8px 16px',
+              background: isSaving 
+                ? 'linear-gradient(135deg, #666 0%, #888 100%)'
+                : editMode 
+                  ? 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)'
+                  : 'rgba(100,100,100,0.5)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontWeight: '700',
+              cursor: isSaving || !editMode ? 'not-allowed' : 'pointer',
+              fontSize: '12px',
+              opacity: editMode ? 1 : 0.6
+            }}
+          >
+            {isSaving ? '⏳...' : '💾 Save'}
+          </button>
+
+          {/* Export PDF */}
+          <button
+            onClick={exportToPDF}
+            disabled={isGeneratingPDF}
+            style={{
+              padding: '8px 16px',
+              background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+          >
+            {isGeneratingPDF ? '⏳...' : '📄 PDF'}
+          </button>
+
+          {/* Export Excel */}
+          <button
+            onClick={exportToExcel}
+            disabled={isExportingExcel}
+            style={{
+              padding: '8px 16px',
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+          >
+            {isExportingExcel ? '⏳...' : '📊 Excel'}
+          </button>
+
+          {/* Test Excel */}
+          <button
+            onClick={testExportToExcel}
+            disabled={isExportingExcel}
+            style={{
+              padding: '8px 16px',
+              background: 'linear-gradient(135deg, #00b09b 0%, #96c93d 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+          >
+            🧪 Test
+          </button>
+
+          {/* AI Smart Excel */}
+          <button
+            onClick={smartExportToExcel}
+            disabled={isSmartExporting}
+            style={{
+              padding: '8px 16px',
+              background: isSmartExporting 
+                ? 'linear-gradient(135deg, #666 0%, #888 100%)'
+                : 'linear-gradient(135deg, #f857a6 0%, #ff5858 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontWeight: '700',
+              cursor: isSmartExporting ? 'wait' : 'pointer',
+              fontSize: '12px'
+            }}
+          >
+            {isSmartExporting ? `🤖 ${exportProgress}` : '🤖 AI Excel'}
+          </button>
+
+          {/* Export JSON */}
+          <button
+            onClick={exportToJSON}
+            style={{
+              padding: '8px 16px',
+              background: 'linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)',
+              color: '#333',
+              border: 'none',
+              borderRadius: '8px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              fontSize: '12px'
+            }}
+          >
+            📥 JSON
+          </button>
         </div>
       </div>
     );
