@@ -1,11 +1,11 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 module.exports = function(app) {
-  // Proxy for maintenance.umanerp.com to bypass CORS
+  // Proxy for newmaintenance.umanerp.com to bypass CORS
   app.use(
     '/proxy-pdf',
     createProxyMiddleware({
-      target: 'https://maintenance.umanerp.com',
+      target: 'https://newmaintenance.umanerp.com',
       changeOrigin: true,
       pathRewrite: {
         '^/proxy-pdf': '', // Remove /proxy-pdf prefix when forwarding

@@ -53,7 +53,7 @@ app.use((req, res, next) => {
 app.get('/proxy-pdf/*', async (req, res) => {
   try {
     const pdfPath = req.path.replace('/proxy-pdf/', '');
-    const targetUrl = `https://maintenance.umanerp.com/${pdfPath}`;
+    const targetUrl = `https://newmaintenance.umanerp.com/${pdfPath}`;
     
     console.log(`📄 Proxying PDF: ${targetUrl}`);
     
@@ -74,12 +74,12 @@ app.get('/proxy-pdf/*', async (req, res) => {
   }
 });
 
-// ========== API PROXY to maintenance.umanerp.com ==========
+// ========== API PROXY to newmaintenance.umanerp.com ==========
 // POST requests proxy
 app.post('/api/peelTest/*', async (req, res) => {
   try {
     const apiPath = req.path;
-    const targetUrl = `https://maintenance.umanerp.com${apiPath}`;
+    const targetUrl = `https://newmaintenance.umanerp.com${apiPath}`;
     
     console.log(`🔄 Proxying API POST: ${targetUrl}`);
     
@@ -127,7 +127,7 @@ app.post('/api/peelTest/*', async (req, res) => {
 app.get('/api/peelTest/*', async (req, res) => {
   try {
     const apiPath = req.path;
-    const targetUrl = `https://maintenance.umanerp.com${apiPath}${req.url.includes('?') ? '?' + req.url.split('?')[1] : ''}`;
+    const targetUrl = `https://newmaintenance.umanerp.com${apiPath}${req.url.includes('?') ? '?' + req.url.split('?')[1] : ''}`;
     
     console.log(`🔄 Proxying API GET: ${targetUrl}`);
     

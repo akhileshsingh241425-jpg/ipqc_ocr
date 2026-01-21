@@ -39,7 +39,7 @@ npm run build
 ## 🔧 Configuration
 
 ### API Endpoints
-- **Checklist API**: `https://maintenance.umanerp.com/api/peelTest/getuploadCheckListPdf`
+- **Checklist API**: `https://newmaintenance.umanerp.com/api/peelTest/getuploadCheckListPdf`
 - **PDF Proxy**: Configured in `src/setupProxy.js`
 
 ### Environment Variables
@@ -94,7 +94,7 @@ ipqc-app/
 
 ### Fetch Checklists
 ```javascript
-POST https://maintenance.umanerp.com/api/peelTest/getuploadCheckListPdf
+POST https://newmaintenance.umanerp.com/api/peelTest/getuploadCheckListPdf
 Body: {}
 ```
 

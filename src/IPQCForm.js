@@ -9,7 +9,7 @@ import { parseWithLLM, parseWithKeywordMatching } from './services/llmParser';
 import { exportIPQCToExcel } from './services/excelLLMMapper';
 import './IPQCForm.css';
 
-// API Base URL - Always use local backend server (proxies to maintenance.umanerp.com)
+// API Base URL - Always use local backend server (proxies to newmaintenance.umanerp.com)
 // This avoids CORS issues in both development and production
 const API_BASE_URL = window.location.hostname === 'localhost' 
   ? 'http://localhost:8080'  // Local development
@@ -264,7 +264,7 @@ const IPQCForm = () => {
       setOcrProgress({ current: 0, total: uniquePdfPages.length });
 
       // Store PDF URLs for download - use actual server URLs
-      const actualPdfUrls = uniquePdfPages.map(filePath => `https://maintenance.umanerp.com/api/${filePath}`);
+      const actualPdfUrls = uniquePdfPages.map(filePath => `https://newmaintenance.umanerp.com/api/${filePath}`);
       setLoadedPdfUrls(actualPdfUrls);
       console.log('📥 Download URLs saved:', actualPdfUrls);
 
