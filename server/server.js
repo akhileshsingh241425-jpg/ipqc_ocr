@@ -235,7 +235,7 @@ if (process.env.NODE_ENV === 'production') {
 const startServer = async () => {
   try {
     // Sync database models (create tables if not exist)
-    await sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
+    await sequelize.sync();
     console.log('✅ Database tables synced successfully!');
     
     // Start the Express server
