@@ -6,17 +6,24 @@ import { extractTextFromImage } from './services/azureOCR';
 import { parseIPQCComplete } from './services/smartIPQCParser';
 import { parsePreLaminationComplete, parseIPQCAllStages, parsePage1, parsePage2, parsePage3, parsePage4, parsePage5, parsePage6, parsePage7 } from './services/ipqcStageParser';
 import { parseWithLLM, parseWithKeywordMatching } from './services/llmParser';
+import { mapIPQCWithAI, mapMultipleIPQCWithAI } from './services/enhancedAIMapper';
+import { processPDFWithBatchMapping, storePageOCR, clearStoredOCR } from './services/batchAIMapper';
+import { deepScanAllPages, clearAllOCR } from './services/deepPageScanner';
 import { exportIPQCToExcel } from './services/excelLLMMapper';
+import { generateHandwrittenIPQCExcel } from './services/handwrittenExcelFiller';
+import { generateHandwrittenPDF } from './services/handwrittenPDFExporter';
+import BatchProcessor from './BatchProcessor';
 import './IPQCForm.css';
+
 
 // API Base URL - Always use local backend server (proxies to newmaintenance.umanerp.com)
 // This avoids CORS issues in both development and production
-const API_BASE_URL = window.location.hostname === 'localhost' 
+const API_BASE_URL = window.location.hostname === 'localhost'
   ? 'http://localhost:8080'  // Local development
   : `http://${window.location.hostname}:8080`;  // Production (same server)
 
 console.log('🌐 API_BASE_URL:', API_BASE_URL);
-  
+
 // Proxy URL for PDF files (to bypass CORS in development)
 const PDF_PROXY_URL = '/proxy-pdf';
 
@@ -33,7 +40,7 @@ const IPQCForm = () => {
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [ocrProgress, setOcrProgress] = useState({ current: 0, total: 0 });
-  
+
   // API Integration State
   const [availableChecklists, setAvailableChecklists] = useState([]);
   const [selectedChecklist, setSelectedChecklist] = useState(null);
@@ -49,7 +56,7 @@ const IPQCForm = () => {
   const [showDebug, setShowDebug] = useState(false); // Toggle debug panel
   const [selectedDebugPage, setSelectedDebugPage] = useState(1); // Selected page for single-page debug
   const [singlePageProcessing, setSinglePageProcessing] = useState(false); // Processing single page flag
-  
+
   // PDF Preview State
   const [pdfPreviews, setPdfPreviews] = useState([]); // Store all 7 page previews as images
   const [showPdfPreview, setShowPdfPreview] = useState(false); // Toggle PDF preview panel
@@ -58,7 +65,7 @@ const IPQCForm = () => {
   const [useHalfPageMode, setUseHalfPageMode] = useState(false); // Full page OCR (default OFF)
   const [zoomedPage, setZoomedPage] = useState(null); // Zoomed page for modal view
   const [processedPages, setProcessedPages] = useState(new Set()); // Track which pages have been processed to prevent duplicates
-  
+
   // Checklist Table Filter States
   const [filterLine, setFilterLine] = useState(''); // Filter by Line
   const [filterShift, setFilterShift] = useState(''); // Filter by Shift (Day/Night)
@@ -66,10 +73,11 @@ const IPQCForm = () => {
   const [showChecklistTable, setShowChecklistTable] = useState(true); // Toggle table visibility
   const [showFilledForm, setShowFilledForm] = useState(false); // Show/hide filled IPQC form
   const [formViewMode, setFormViewMode] = useState(false); // Full screen form view mode (split with PDF)
+  const [showBatchProcessor, setShowBatchProcessor] = useState(false); // Batch processing mode
   const [activePdfPage, setActivePdfPage] = useState(1); // Currently viewed PDF page in split view
   const [useHandwritingFont, setUseHandwritingFont] = useState(true); // Toggle handwriting style font
   const [selectedFont, setSelectedFont] = useState('Caveat'); // Selected handwriting font
-  
+
   // ========== OCR PROCESSED & SAVED PDFs TRACKING ==========
   const [processedChecklists, setProcessedChecklists] = useState(() => {
     // Load from localStorage on init
@@ -78,7 +86,12 @@ const IPQCForm = () => {
   }); // Track which checklists have been OCR processed: { checklistId: { processed: true, saved: false, savedAt: null, editedData: null } }
   const [isSaving, setIsSaving] = useState(false); // Saving state
   const [editMode, setEditMode] = useState(false); // Edit mode toggle
-  
+
+  // ========== HANDWRITTEN EXPORT STATES ==========
+  const [isExportingHandwrittenExcel, setIsExportingHandwrittenExcel] = useState(false);
+  const [isExportingHandwrittenPDF, setIsExportingHandwrittenPDF] = useState(false);
+
+
   const [formData, setFormData] = useState({
     date: '',
     time: '',
@@ -177,7 +190,7 @@ const IPQCForm = () => {
   });
 
   // ========== API INTEGRATION FUNCTIONS ==========
-  
+
   // Fetch available checklists from API
   const fetchAvailableChecklists = async () => {
     setIsLoadingChecklists(true);
@@ -192,9 +205,9 @@ const IPQCForm = () => {
       });
       if (!response.ok) throw new Error('Failed to fetch checklists');
       const data = await response.json();
-      
+
       console.log('📋 API Response:', data);
-      
+
       // Handle different response structures
       let checklistArray = [];
       if (Array.isArray(data)) {
@@ -209,12 +222,12 @@ const IPQCForm = () => {
         // If it's a single object, wrap in array
         checklistArray = [data];
       }
-      
+
       // Filter only IPQC checklists and sort by date
       const ipqcChecklists = checklistArray
         .filter(item => item && item.Type === 'ipqcChecklist')
         .sort((a, b) => new Date(b.date) - new Date(a.date));
-      
+
       setAvailableChecklists(ipqcChecklists);
       console.log('📋 Available IPQC Checklists:', ipqcChecklists.length);
     } catch (error) {
@@ -228,7 +241,7 @@ const IPQCForm = () => {
   // Load checklist PDFs and process via OCR
   const loadChecklistFromAPI = async (checklist) => {
     if (!checklist) return;
-    
+
     setIsLoadingFromAPI(true);
     setApiError('');
     setSelectedChecklist(checklist);
@@ -237,11 +250,11 @@ const IPQCForm = () => {
     setDebugData([]); // Reset debug data
     setShowDebug(false);
     setProcessedPages(new Set()); // Reset processed pages tracker to prevent duplicates
-    
+
     try {
       // Log the full checklist object to see its structure
       console.log('📋 Full checklist object:', JSON.stringify(checklist, null, 2));
-      
+
       // Get all 7 PDF page URLs
       const pdfPages = [
         checklist.Page1PdfFile,
@@ -252,7 +265,7 @@ const IPQCForm = () => {
         checklist.Page6PdfFile,
         checklist.Page7PdfFile
       ].filter(Boolean);
-      
+
       // Remove duplicate PDF URLs to prevent processing same page twice
       const uniquePdfPages = [...new Set(pdfPages)];
       if (uniquePdfPages.length !== pdfPages.length) {
@@ -271,73 +284,113 @@ const IPQCForm = () => {
       // Process each PDF page ONE BY ONE and update form after each
       let successCount = 0;
       const processedPageSet = new Set(); // Local tracker for this session
-      
+      const collectedOCRTexts = {}; // Store all OCR texts for batch processing
+
       // Helper function to add delay between API calls to avoid rate limiting
       const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+      // Clear any previous stored OCR data
+      clearStoredOCR();
+
+      // ============ STEP 1: Collect ALL OCR text from all pages ============
+      console.log('\n🔄 STEP 1: Collecting OCR from all pages...');
       
       for (let i = 0; i < uniquePdfPages.length; i++) {
-        setOcrProgress({ current: i + 1, total: uniquePdfPages.length });
-        
+        setOcrProgress({ current: i + 1, total: uniquePdfPages.length, phase: 'OCR' });
+
         // Add delay between OCR calls to avoid Azure rate limiting (429 errors)
         // Azure F0 tier allows ~20 calls per minute, so 20 second delay is safe
         if (i > 0) {
           console.log(`   ⏳ Waiting 20 seconds to avoid API rate limit...`);
           await delay(20000);
         }
-        
+
         const filePath = uniquePdfPages[i];
-        
+
         // Check if this page was already processed (duplicate prevention)
         if (processedPageSet.has(filePath)) {
           console.log(`⚠️ SKIPPING PAGE ${i + 1} - Already processed (duplicate)`);
           continue;
         }
-        
+
         console.log(`\n════════════════════════════════════════`);
-        console.log(`📖 PROCESSING PAGE ${i + 1} OF ${uniquePdfPages.length}`);
+        console.log(`📖 OCR PAGE ${i + 1} OF ${uniquePdfPages.length}`);
         console.log(`🆔 Page ID: ${filePath}`);
         processedPageSet.add(filePath); // Mark as processed
         console.log(`   File: ${filePath}`);
         console.log(`════════════════════════════════════════`);
         console.log(`   ✂️ Half Page Mode: ${useHalfPageMode ? 'ON' : 'OFF'}`);
-        
+
         try {
           // Step 1: Download PDF and convert to image (with optional crop)
           const pdfUrl = `${PDF_PROXY_URL}/api/${filePath}`;
           console.log(`   📥 Downloading: ${pdfUrl}`);
-          
+
           const imageBlob = await convertPdfToImage(pdfUrl, useHalfPageMode);
-          
+
           if (!imageBlob) {
             console.error(`   ❌ Failed to download PDF for page ${i + 1}`);
             continue;
           }
           console.log(`   ✅ PDF downloaded ${useHalfPageMode ? '(RIGHT HALF)' : '(FULL)'}`);
-          
+
           // Step 2: OCR - Extract text from this page
           const base64 = await blobToBase64(imageBlob);
           const pageText = await extractTextFromImage(base64);
           console.log(`   ✅ OCR complete for Page ${i + 1}`);
           console.log(`   📝 Text length: ${pageText.length} characters`);
-          
+
           // Step 3: Log OCR text for this page
           console.log(`\n--- PAGE ${i + 1} OCR TEXT ---`);
           console.log(pageText);
           console.log(`--- END PAGE ${i + 1} ---\n`);
-          
-          // Step 4: Parse THIS PAGE's text and update form
-          // Pass page number so parser knows which stages to expect
-          await parseAndUpdateFormByPage(pageText, i + 1);
-          console.log(`   ✅ Form updated with Page ${i + 1} data`);
-          
+
+          // Step 4: Store OCR text for batch processing later
+          collectedOCRTexts[i + 1] = pageText;
+          storePageOCR(i + 1, pageText);
+          console.log(`   ✅ OCR text stored for Page ${i + 1}`);
+
           successCount++;
-          
+
         } catch (pageError) {
           console.error(`   ❌ Error processing page ${i + 1}:`, pageError.message);
           // Continue with next page
         }
       }
-      
+
+      // ============ STEP 2: DEEP PAGE-BY-PAGE AI SCAN ============
+      if (successCount > 0 && Object.keys(collectedOCRTexts).length > 0) {
+        console.log('\n🤖 STEP 2: DEEP PAGE-BY-PAGE AI SCAN...');
+        console.log('📄 Pages collected:', Object.keys(collectedOCRTexts).length);
+        setOcrProgress({ current: 0, total: Object.keys(collectedOCRTexts).length, phase: 'Deep Page Scan' });
+
+        try {
+          // Clear previous scan data
+          clearAllOCR();
+          
+          // Use DEEP PAGE SCANNER - processes EACH PAGE separately with detailed prompts
+          const mappedData = await deepScanAllPages(collectedOCRTexts, (progress) => {
+            console.log(`   🔄 ${progress}`);
+          });
+
+          console.log('✅ DEEP SCAN complete:', Object.keys(mappedData).length, 'fields');
+          console.log('📋 Extracted fields:', Object.keys(mappedData));
+
+          // Update form with mapped data using the new function
+          if (Object.keys(mappedData).length > 0) {
+            applyMappedDataToForm(mappedData);
+            console.log('✅ Form updated with deep scanned data');
+          }
+        } catch (aiError) {
+          console.error('⚠️ Deep Page Scan failed:', aiError.message);
+          // Fall back to regex parsing for each page
+          console.log('🔄 Falling back to regex parsing...');
+          for (const [pageNum, pageText] of Object.entries(collectedOCRTexts)) {
+            await parseAndUpdateFormByPage(pageText, parseInt(pageNum));
+          }
+        }
+      }
+
       // Update processed pages state
       setProcessedPages(processedPageSet);
 
@@ -348,11 +401,11 @@ const IPQCForm = () => {
         shift: checklist.Shift || prev.shift,
         poNo: checklist.Line || prev.poNo
       }));
-      
+
       if (successCount > 0) {
         // Load PDF previews for split view
         await loadPdfPreviews(checklist);
-        
+
         // Mark this checklist as OCR processed
         const checklistId = checklist._id || checklist.id || `${checklist.date}_${checklist.Line}_${checklist.Shift}`;
         const updatedProcessed = {
@@ -372,18 +425,18 @@ const IPQCForm = () => {
         setProcessedChecklists(updatedProcessed);
         localStorage.setItem('ipqc_processed_checklists', JSON.stringify(updatedProcessed));
         setEditMode(true); // Enable edit mode after OCR
-        
+
         // Show OCR report and open form view mode
         setShowOcrReport(true);
         setFormViewMode(true); // Open split view mode with form and PDF side by side
-        
+
         const duplicatesRemoved = pdfPages.length - uniquePdfPages.length;
         const duplicateMsg = duplicatesRemoved > 0 ? `\n\n⚠️ ${duplicatesRemoved} duplicate pages removed automatically!` : '';
         console.log(`✅ Successfully processed ${successCount}/${uniquePdfPages.length} unique pages!`);
       } else {
         throw new Error('Could not process any PDF pages');
       }
-      
+
     } catch (error) {
       console.error('Error loading checklist from API:', error);
       setApiError('Failed to process checklist: ' + error.message);
@@ -397,12 +450,12 @@ const IPQCForm = () => {
   // Load all 7 PDF pages as image previews for visual verification
   const loadPdfPreviews = async (checklist) => {
     if (!checklist) return;
-    
+
     setIsLoadingPreviews(true);
     setPdfPreviews([]);
     setShowPdfPreview(true);
     setSelectedChecklist(checklist);
-    
+
     try {
       // Get all 7 PDF page URLs
       const pdfPages = [
@@ -416,17 +469,17 @@ const IPQCForm = () => {
       ].filter(Boolean);
 
       console.log('📄 Loading PDF previews for', pdfPages.length, 'pages...');
-      
+
       const previews = [];
-      
+
       for (let i = 0; i < pdfPages.length; i++) {
         const filePath = pdfPages[i];
         console.log(`📥 Loading preview for Page ${i + 1}: ${filePath}`);
-        
+
         try {
           const pdfUrl = `${PDF_PROXY_URL}/api/${filePath}`;
           const imageBlob = await convertPdfToImage(pdfUrl);
-          
+
           if (imageBlob) {
             const imageUrl = URL.createObjectURL(imageBlob);
             previews.push({
@@ -453,13 +506,13 @@ const IPQCForm = () => {
             error: err.message
           });
         }
-        
+
         // Update previews progressively
         setPdfPreviews([...previews]);
       }
-      
+
       console.log('✅ All PDF previews loaded');
-      
+
     } catch (error) {
       console.error('Error loading PDF previews:', error);
     } finally {
@@ -491,7 +544,7 @@ const IPQCForm = () => {
 
     const filePath = pdfPages[pageIndex];
     const pageNumber = pageIndex + 1;
-    
+
     console.log(`\n🔬════════════════════════════════════════════════`);
     console.log(`🔬 PROCESSING API PAGE ${pageNumber} (File: ${filePath})`);
     console.log(`🔬 Half Page Mode: ${useHalfPageMode ? 'ON (Right Half Only)' : 'OFF (Full Page)'}`);
@@ -500,14 +553,14 @@ const IPQCForm = () => {
     try {
       const pdfUrl = `${PDF_PROXY_URL}/api/${filePath}`;
       const imageBlob = await convertPdfToImage(pdfUrl, useHalfPageMode);
-      
+
       if (!imageBlob) {
         throw new Error(`Failed to download PDF`);
       }
-      
+
       const base64 = await blobToBase64(imageBlob);
       const pageText = await extractTextFromImage(base64);
-      
+
       console.log(`\n╔════════════════════════════════════════════════╗`);
       console.log(`║ API PAGE ${pageNumber} - FULL OCR TEXT                 ║`);
       console.log(`╚════════════════════════════════════════════════╝`);
@@ -515,7 +568,7 @@ const IPQCForm = () => {
       console.log(`\n╔════════════════════════════════════════════════╗`);
       console.log(`║ END API PAGE ${pageNumber} OCR TEXT                    ║`);
       console.log(`╚════════════════════════════════════════════════╝\n`);
-      
+
       // Store debug data
       setDebugData([{
         pageNumber: pageNumber,
@@ -523,7 +576,7 @@ const IPQCForm = () => {
         fields: {},
         timestamp: new Date().toLocaleTimeString()
       }]);
-      
+
       // Try LLM parsing
       if (useLLMParser && GROQ_API_KEY) {
         console.log('🤖 Trying LLM parser...');
@@ -531,13 +584,13 @@ const IPQCForm = () => {
         if (llmData && Object.keys(llmData).length > 0) {
           console.log(`✅ LLM extracted ${Object.keys(llmData).length} fields:`);
           console.log(JSON.stringify(llmData, null, 2));
-          setDebugData(prev => prev.map(p => p.pageNumber === pageNumber ? {...p, fields: llmData} : p));
+          setDebugData(prev => prev.map(p => p.pageNumber === pageNumber ? { ...p, fields: llmData } : p));
         }
       }
-      
+
       setShowDebug(true);
       console.log(`✅ API Page ${pageNumber} processed`);
-      
+
     } catch (error) {
       console.error(`❌ Error:`, error);
     } finally {
@@ -585,20 +638,20 @@ const IPQCForm = () => {
       // Step 1: Download PDF and convert to image (with optional crop)
       const pdfUrl = `${PDF_PROXY_URL}/api/${filePath}`;
       console.log(`📥 Downloading: ${pdfUrl}`);
-      
+
       const imageBlob = await convertPdfToImage(pdfUrl, useHalfPageMode);
-      
+
       if (!imageBlob) {
         throw new Error(`Failed to download PDF for page ${pageNumber}`);
       }
       console.log(`✅ PDF downloaded and converted to image ${useHalfPageMode ? '(RIGHT HALF)' : '(FULL)'}`);
-      
+
       // Step 2: OCR - Extract text
       const base64 = await blobToBase64(imageBlob);
       const pageText = await extractTextFromImage(base64);
       console.log(`✅ OCR complete for Page ${pageNumber}`);
       console.log(`📝 Text length: ${pageText.length} characters`);
-      
+
       // Step 3: Log OCR text FULLY
       console.log(`\n╔════════════════════════════════════════════════╗`);
       console.log(`║ PAGE ${pageNumber} FULL OCR TEXT ${useHalfPageMode ? '(HALF)' : '(FULL)'}             ║`);
@@ -607,15 +660,15 @@ const IPQCForm = () => {
       console.log(`╔════════════════════════════════════════════════╗`);
       console.log(`║ END PAGE ${pageNumber} OCR TEXT                       ║`);
       console.log(`╚════════════════════════════════════════════════╝\n`);
-      
+
       // Step 4: Parse with detailed logging
       await parseAndUpdateFormByPage(pageText, pageNumber);
-      
+
       setShowDebug(true);
       setShowOcrReport(true);
-      
+
       console.log(`✅ Page ${pageNumber} processed`);
-      
+
     } catch (error) {
       console.error(`❌ Error processing page ${pageNumber}:`, error);
     } finally {
@@ -627,10 +680,10 @@ const IPQCForm = () => {
   // This ensures each page's data goes to correct form fields
   const parseAndUpdateFormByPage = async (pageText, pageNumber) => {
     console.log(`\n🔍 Parsing Page ${pageNumber} data...`);
-    
+
     // Use page-specific parser to avoid cross-page data mixing
     let data = {};
-    
+
     // Try LLM parser first if enabled
     if (useLLMParser && GROQ_API_KEY) {
       try {
@@ -639,7 +692,7 @@ const IPQCForm = () => {
         // 4 seconds provides safe buffer for all pages (7 pages × 4s = 28s total)
         console.log(`⏳ Waiting 4 seconds before LLM call (rate limit protection)...`);
         await delay(4000);
-        
+
         console.log('🤖 Using LLM parser...');
         const llmData = await parseWithLLM(pageText, pageNumber);
         if (llmData && Object.keys(llmData).length > 0) {
@@ -650,12 +703,12 @@ const IPQCForm = () => {
         console.log('⚠️ LLM parser failed, using regex fallback:', error.message);
       }
     }
-    
+
     // If LLM didn't work or is disabled, use keyword matching
     if (Object.keys(data).length === 0) {
       // First try keyword matching (simpler, no API needed)
       const keywordData = parseWithKeywordMatching(pageText, pageNumber);
-      
+
       // Then use regex parser
       let regexData = {};
       switch (pageNumber) {
@@ -683,19 +736,19 @@ const IPQCForm = () => {
         default:
           regexData = parseIPQCAllStages(pageText);
       }
-      
+
       // Merge: keyword data + regex data (regex takes priority)
       data = { ...keywordData, ...regexData };
     }
-    
+
     // ======== NO DEFAULT VALUES - ONLY REAL OCR DATA ========
     // Removed auto-fill defaults to prevent fake/incorrect data
     // Only actual OCR extracted values will be used
     console.log(`   🚫 No default values applied - using only actual OCR data`);
-    
+
     console.log(`   📊 Parsed fields from Page ${pageNumber}:`, Object.keys(data).length);
     console.log(`   📋 Fields:`, Object.keys(data));
-    
+
     // Save parsed data for debug view
     const parsedFields = Object.entries(data).map(([key, value]) => ({
       page: pageNumber,
@@ -704,14 +757,14 @@ const IPQCForm = () => {
       type: typeof value
     }));
     setDebugData(prev => [...prev, ...parsedFields]);
-    
+
     // Get current form data
     const newFormData = { ...formData };
     const newCheckpoints = [...newFormData.checkpoints];
-    
+
     // Track OCR results for report
     const pageReport = [];
-    
+
     // Page-wise stage mapping (approximate - based on IPQC form layout):
     // Page 1: Stages 1-6 (Shop Floor, Glass, EVA, Cell Loading, Tabber) - checkpoints 0-19
     // Page 2: Stages 7-8 (Auto Bussing, Auto RFID) - checkpoints 20-28
@@ -724,7 +777,7 @@ const IPQCForm = () => {
     // Helper to track field status
     const trackField = (checkpointIndex, fieldName, value, ocrKey) => {
       const checkpointName = newCheckpoints[checkpointIndex]?.description || `Checkpoint ${checkpointIndex + 1}`;
-      
+
       if (!value || !value.toString().trim()) {
         pageReport.push({
           page: pageNumber,
@@ -737,12 +790,12 @@ const IPQCForm = () => {
         });
         return false;
       }
-      
+
       // Check for placeholder/default values
       const placeholders = ['placeholder', 'n/a', 'na', '-', 'ok', ''];
       const isPlaceholder = placeholders.includes(value.toString().toLowerCase().trim());
       const isDefaultOK = value.toString().toLowerCase().trim() === 'ok';
-      
+
       if (isPlaceholder && !isDefaultOK) {
         pageReport.push({
           page: pageNumber,
@@ -755,7 +808,7 @@ const IPQCForm = () => {
         });
         return true;
       }
-      
+
       // Success
       pageReport.push({
         page: pageNumber,
@@ -804,7 +857,7 @@ const IPQCForm = () => {
     if (pageNumber === 1) {
       // Page 1: Shop Floor, Glass, EVA, Cell Loading, Tabber & Stringer (checkpoints 0-19)
       console.log('   📄 Page 1: Processing Shop Floor to Tabber & Stringer');
-      
+
       setIfExists(0, data.temperature, 'Temperature', 'temperature');
       if (data.temperatureTime) setSubIfExists(0, { Time: data.temperatureTime }, 'Time');
       setIfExists(1, data.humidity, 'Humidity', 'humidity');
@@ -813,13 +866,13 @@ const IPQCForm = () => {
       setIfExists(4, data.eva1Type, 'EVA Type', 'eva1Type');
       setIfExists(5, data.eva1Dimension, 'EVA Dimension', 'eva1Dimension');
       setIfExists(6, data.evaManufacturingDate ? `OK / ${data.evaManufacturingDate}` : data.evaStatusOk, 'EVA Status/Date', 'evaManufacturingDate');
-      
+
       if (data.evaSolderingTemp || data.solderingTemperature) {
         setSubIfExists(7, { Temp: data.evaSolderingTemp || data.solderingTemperature, Quality: 'OK' }, 'Soldering Temp');
       } else {
         trackField(7, 'Soldering Temp', null, 'evaSolderingTemp');
       }
-      
+
       if (data.cellManufacturer || data.cellEfficiency) {
         setIfExists(8, `${data.cellManufacturer || ''} ${data.cellEfficiency || ''}`.trim(), 'Cell Make & Efficiency', 'cellManufacturer');
       } else {
@@ -834,13 +887,13 @@ const IPQCForm = () => {
         trackField(12, 'ATW Temp', null, 'atwTemp');
       }
       setIfExists(13, data.crossCutting, 'Cross Cutting', 'crossCutting');
-      
+
       if (data.tabberProcessParam) {
         setSubIfExists(14, { 'Process Param': data.tabberProcessParam }, 'Tabber Process Param');
       } else {
         trackField(14, 'Tabber Process Param', null, 'tabberProcessParam');
       }
-      
+
       // Visual Check (sr 16, index 15)
       if (data.visualCheckTS01A) {
         setSubIfExists(15, {
@@ -852,7 +905,7 @@ const IPQCForm = () => {
       } else {
         trackField(15, 'Visual Check', null, 'visualCheckTS01A-TS04B');
       }
-      
+
       // EL Image (sr 17, index 16)
       if (data.elImageTS01A) {
         setSubIfExists(16, {
@@ -864,7 +917,7 @@ const IPQCForm = () => {
       } else {
         trackField(16, 'EL Image', null, 'elImageTS01A-TS04B');
       }
-      
+
       // String Length (sr 18, index 17)
       if (data.stringLengthTS01A) {
         setSubIfExists(17, {
@@ -876,7 +929,7 @@ const IPQCForm = () => {
       } else {
         trackField(17, 'String Length', null, 'stringLengthTS01A-TS04B');
       }
-      
+
       // Cell Gap (sr 19, index 18)
       if (data.cellGapTS01A) {
         setSubIfExists(18, {
@@ -888,7 +941,7 @@ const IPQCForm = () => {
       } else {
         trackField(18, 'Cell Gap', null, 'cellGapTS01A-TS04B');
       }
-      
+
       // Peel Strength (sr 20, index 19)
       if (data.tabberPeelStrength) {
         setSubIfExists(19, { 'Ribbon to cell': data.tabberPeelStrength }, 'Peel Strength');
@@ -896,7 +949,7 @@ const IPQCForm = () => {
         trackField(19, 'Peel Strength', null, 'tabberPeelStrength');
       }
     }
-    
+
     else if (pageNumber === 2) {
       // Page 2: Auto Bussing, Layup, Tapping, EVA/EPE, Back Glass (checkpoints index 19-32)
       // Based on form structure:
@@ -915,7 +968,7 @@ const IPQCForm = () => {
       // Index 31 (sr 32): EVA/EPE Status
       // Index 32 (sr 33): Back Glass dimension
       console.log('   📄 Page 2: Processing Stringer Peel, Auto Bussing, EVA/EPE & Back Glass');
-      
+
       // Index 19 (sr 20): Ribbon to Cell Peel Strength (from Stringer section on Page 2)
       const ribbonPeel = data.ribbonToCellPeelStrength || data.peelStrength;
       if (ribbonPeel) {
@@ -923,78 +976,78 @@ const IPQCForm = () => {
       } else {
         trackField(19, 'Ribbon to Cell Peel Strength', null, 'ribbonToCellPeelStrength');
       }
-      
+
       // Index 20 (sr 21): String to String Gap
       setIfExists(20, data.stringToStringGap, 'String to String Gap', 'stringToStringGap');
-      
+
       // Index 21 (sr 22): Cell Edge to Glass Edge (Top, Bottom, Sides)
       if (data.cellEdgeTop || data.cellEdgeBottom || data.cellEdgeSides) {
         setSubIfExists(21, { TOP: data.cellEdgeTop, Bottom: data.cellEdgeBottom, Sides: data.cellEdgeSides }, 'Cell Edge');
       } else {
         trackField(21, 'Cell Edge', null, 'cellEdgeTop/Bottom/Sides');
       }
-      
+
       // Index 22 (sr 23): Busbar Peel Strength (Ribbon to busbar)
       if (data.busbarPeelStrength) {
         setSubIfExists(22, { 'Ribbon to busbar': data.busbarPeelStrength }, 'Busbar Peel Strength');
       } else {
         trackField(22, 'Busbar Peel Strength', null, 'busbarPeelStrength');
       }
-      
+
       // Index 23 (sr 24): Terminal Busbar to Edge of Cell
       const terminalBusbar = data.terminalBusbar || data.terminalBusbarToEdge;
       setIfExists(23, terminalBusbar, 'Terminal Busbar to Edge', 'terminalBusbar');
-      
+
       // Index 24 (sr 25): Soldering Quality of Ribbon to busbar (3 readings: OK, OK, OK)
       if (data.solderingQuality1) {
-        setIfExists(24, `${data.solderingQuality1}, ${data.solderingQuality2 || ''}, ${data.solderingQuality3 || ''}`.replace(/, $/,'').replace(/, ,/g,','), 'Soldering Quality', 'solderingQuality1-3');
+        setIfExists(24, `${data.solderingQuality1}, ${data.solderingQuality2 || ''}, ${data.solderingQuality3 || ''}`.replace(/, $/, '').replace(/, ,/g, ','), 'Soldering Quality', 'solderingQuality1-3');
       } else {
         trackField(24, 'Soldering Quality', null, 'solderingQuality1-3');
       }
-      
+
       // Index 25 (sr 26): Top & Bottom Creepage Distance (multiple readings each)
       const creepageTop = data.creepageTop || data.creepageTop1;
       const creepageBottom = data.creepageBottom || data.creepageBottom1;
       if (creepageTop || creepageBottom) {
         let topValues = creepageTop || '';
         let bottomValues = creepageBottom || '';
-        
+
         if (data.creepageTop1 || data.creepageTop2 || data.creepageTop3) {
           topValues = [data.creepageTop1, data.creepageTop2, data.creepageTop3].filter(v => v).join(', ');
         }
         if (data.creepageBottom1 || data.creepageBottom2 || data.creepageBottom3) {
           bottomValues = [data.creepageBottom1, data.creepageBottom2, data.creepageBottom3].filter(v => v).join(', ');
         }
-        
+
         setSubIfExists(25, { 'Top': topValues, 'Bottom': bottomValues }, 'Creepage Distance');
       } else {
         trackField(25, 'Creepage Distance', null, 'creepageTop/Bottom');
       }
-      
+
       // Index 26 (sr 27): Verification of Process Parameter for Auto Bussing
       const processVerification = data.processVerificationAuto || data.autoBussingStatus;
       setIfExists(26, processVerification, 'Process Verification', 'processVerificationAuto');
-      
+
       // Index 27 (sr 28): Quality of Auto Taping (3 readings: OK, OK, OK)
       const autoTaping1 = data.autoTaping1 || data.autoTapingQuality1;
       const autoTaping2 = data.autoTaping2 || data.autoTapingQuality2;
       const autoTaping3 = data.autoTaping3 || data.autoTapingQuality3;
       if (autoTaping1) {
-        setIfExists(27, `${autoTaping1}, ${autoTaping2 || ''}, ${autoTaping3 || ''}`.replace(/, $/,'').replace(/, ,/g,','), 'Auto Taping Quality', 'autoTaping1-3');
+        setIfExists(27, `${autoTaping1}, ${autoTaping2 || ''}, ${autoTaping3 || ''}`.replace(/, $/, '').replace(/, ,/g, ','), 'Auto Taping Quality', 'autoTaping1-3');
       } else {
         trackField(27, 'Auto Taping Quality', null, 'autoTaping1-3');
       }
-      
+
       // Index 28 (sr 29): RFID/Logo Position Verification (3 readings: OK, OK, OK)
       const posVerify1 = data.positionVerification1 || data.rfidPosition1;
       const posVerify2 = data.positionVerification2 || data.rfidPosition2;
       const posVerify3 = data.positionVerification3 || data.rfidPosition3;
       if (posVerify1) {
-        setIfExists(28, `${posVerify1}, ${posVerify2 || ''}, ${posVerify3 || ''}`.replace(/, $/,'').replace(/, ,/g,','), 'RFID Position Verification', 'positionVerification1-3');
+        setIfExists(28, `${posVerify1}, ${posVerify2 || ''}, ${posVerify3 || ''}`.replace(/, $/, '').replace(/, ,/g, ','), 'RFID Position Verification', 'positionVerification1-3');
       } else {
         trackField(28, 'RFID Position Verification', null, 'positionVerification1-3');
       }
-      
+
       // Index 29 (sr 30): EVA/EPE Type (second EVA section)
       const eva2Type = data.eva2Type || data.evaType;
       if (eva2Type) {
@@ -1002,7 +1055,7 @@ const IPQCForm = () => {
       } else {
         trackField(29, 'EVA/EPE Type', null, 'eva2Type');
       }
-      
+
       // Index 30 (sr 31): EVA/EPE Dimension
       const eva2Dimension = data.eva2Dimension || data.evaDimension;
       if (eva2Dimension) {
@@ -1010,7 +1063,7 @@ const IPQCForm = () => {
       } else {
         trackField(30, 'EVA/EPE Dimension', null, 'eva2Dimension');
       }
-      
+
       // Index 31 (sr 32): EVA/EPE Status
       const eva2Status = data.eva2StatusOk || data.evaStatus;
       if (eva2Status) {
@@ -1018,7 +1071,7 @@ const IPQCForm = () => {
       } else {
         trackField(31, 'EVA/EPE Status', null, 'eva2StatusOk');
       }
-      
+
       // Index 32 (sr 33): Back Glass Dimension
       if (data.backGlassDimension) {
         setIfExists(32, data.backGlassDimension, 'Back Glass Dimension', 'backGlassDimension');
@@ -1026,11 +1079,11 @@ const IPQCForm = () => {
         trackField(32, 'Back Glass Dimension', null, 'backGlassDimension');
       }
     }
-    
+
     else if (pageNumber === 3) {
       // Page 3: Back Glass Holes, Flatten, Pre-Lam EL, String/Module Rework (Sr.34-41)
       console.log('   📄 Page 3: Processing Back Glass Holes to Module Rework');
-      
+
       // Index 33 (Sr.34): Back Glass - No. of Holes & Dimension (OCR values like 11.99mm, 11.97mm, 11.99mm)
       if (data.holesDimension) {
         setIfExists(33, data.holesDimension, 'No. of Holes Dimension', 'holesDimension');
@@ -1039,14 +1092,14 @@ const IPQCForm = () => {
       } else {
         trackField(33, 'No. of Holes', null, 'holesDimension');
       }
-      
+
       // Index 34 (Sr.35): Auto Busbar Flatten - Visual Inspection (5 pieces) - only OK result
       if (data.flattenVisual1) {
         setIfExists(34, `${data.flattenVisual1}, ${data.flattenVisual2 || 'OK'}, ${data.flattenVisual3 || 'OK'}, ${data.flattenVisual4 || 'OK'}, ${data.flattenVisual5 || 'OK'}`, 'Flatten Visual', 'flattenVisual1-5');
       } else {
         trackField(34, 'Flatten Visual', null, 'flattenVisual1-5');
       }
-      
+
       // Index 35 (Sr.36): Pre lamination EL - BARCODE MANDATORY (19-digit barcodes)
       if (data.preLamELBarcode1) {
         setSubIfExists(35, {
@@ -1057,11 +1110,11 @@ const IPQCForm = () => {
       } else {
         trackField(35, 'Pre-Lam EL Barcodes', null, 'preLamELBarcode1-3');
       }
-      
+
       // Index 36 (Sr.37): String Rework Station - Cleaning & sponge
       const stringReworkClean = data.stringReworkCleaning || data.cleaningStatus;
       setIfExists(36, stringReworkClean, 'String Rework Cleaning', 'stringReworkCleaning');
-      
+
       // Index 37 (Sr.38): String Rework Station - Soldering Iron Temp
       const stringReworkTemp = data.stringReworkSolderingTemp || data.solderingIronTemp;
       if (stringReworkTemp) {
@@ -1072,15 +1125,15 @@ const IPQCForm = () => {
       } else {
         trackField(37, 'String Rework Soldering Temp', null, 'stringReworkSolderingTemp');
       }
-      
+
       // Index 38 (Sr.39): Module Rework Station - Method of Rework
       const moduleReworkMethod = data.moduleReworkMethod || data.methodOfRework;
       setIfExists(38, moduleReworkMethod, 'Module Rework Method', 'moduleReworkMethod');
-      
+
       // Index 39 (Sr.40): Module Rework Station - Cleaning of station
       const moduleReworkClean = data.moduleReworkCleaning || data.reworkCleaningStatus;
       setIfExists(39, moduleReworkClean, 'Module Rework Cleaning', 'moduleReworkCleaning');
-      
+
       // Index 40 (Sr.41): Module Rework Station - Soldering Iron Temp
       const moduleReworkTemp = data.moduleReworkSolderingTemp || data.reworkSolderingTemp;
       if (moduleReworkTemp) {
@@ -1089,14 +1142,14 @@ const IPQCForm = () => {
         trackField(40, 'Module Rework Soldering Temp', null, 'moduleReworkSolderingTemp');
       }
     }
-    
+
     else if (pageNumber === 4) {
       // Page 4: Laminator, Tape Remove, Edge Trim, 90° Visual (checkpoints 41-48)
       console.log('   📄 Page 4: Processing Laminator to 90° Visual');
-      
+
       setIfExists(41, data.laminatorMonitoring, 'Laminator Monitoring', 'laminatorMonitoring');
       setIfExists(42, data.diaphragmCleaning, 'Diaphragm Cleaning', 'diaphragmCleaning');
-      
+
       if (data.peelTestRef) {
         setSubIfExists(43, { Ref: data.peelTestRef }, 'Peel Test Ref');
       } else {
@@ -1107,14 +1160,14 @@ const IPQCForm = () => {
       } else {
         trackField(44, 'Gel Content Ref', null, 'gelContentRef');
       }
-      
+
       // Index 45 (Sr.46): Tape Removing Visual Check
       if (data.tapeRemovingVisual1) {
-        setIfExists(45, `${data.tapeRemovingVisual1}, ${data.tapeRemovingVisual2 || ''}, ${data.tapeRemovingVisual3 || ''}, ${data.tapeRemovingVisual4 || ''}, ${data.tapeRemovingVisual5 || ''}`.replace(/, $/,'').replace(/, ,/g,','), 'Tape Removing Visual', 'tapeRemovingVisual1-5');
+        setIfExists(45, `${data.tapeRemovingVisual1}, ${data.tapeRemovingVisual2 || ''}, ${data.tapeRemovingVisual3 || ''}, ${data.tapeRemovingVisual4 || ''}, ${data.tapeRemovingVisual5 || ''}`.replace(/, $/, '').replace(/, ,/g, ','), 'Tape Removing Visual', 'tapeRemovingVisual1-5');
       } else {
         trackField(45, 'Tape Removing Visual', null, 'tapeRemovingVisual1-5');
       }
-      
+
       // Index 46 (Sr.47): Trimming Quality
       if (data.trimmingSNo1) {
         setSubIfExists(46, {
@@ -1124,10 +1177,10 @@ const IPQCForm = () => {
       } else {
         trackField(46, 'Trimming S.No', null, 'trimmingSNo1-5');
       }
-      
+
       // Index 47 (Sr.48): Blade Condition
       setIfExists(47, data.bladeCondition, 'Blade Condition', 'bladeCondition');
-      
+
       if (data.visualSNo1) {
         setSubIfExists(48, {
           S1: `${data.visualSNo1} - ${data.visualResult1 || 'ok'}`,
@@ -1140,11 +1193,11 @@ const IPQCForm = () => {
         trackField(48, '90° Visual Check', null, 'visualSNo1-5');
       }
     }
-    
+
     else if (pageNumber === 5) {
       // Page 5: Framing, JB, JB Solder, JB Potting, OLE, Curing (checkpoints 49-64)
       console.log('   📄 Page 5: Processing Framing to Curing');
-      
+
       setIfExists(49, data.glueUniformity, 'Glue Uniformity', 'glueUniformity');
       if (data.shortSideGlueRef) {
         setSubIfExists(50, { Ref: data.shortSideGlueRef }, 'Short Side Glue Ref');
@@ -1153,19 +1206,19 @@ const IPQCForm = () => {
       }
       setIfExists(51, data.longSideGlueRef, 'Long Side Glue Ref', 'longSideGlueRef');
       setIfExists(52, data.anodizingThickness, 'Anodizing Thickness', 'anodizingThickness');
-      
+
       if (data.jbAppearance || data.jbCableLength) {
         setIfExists(53, `${data.jbAppearance || 'ok'} / ${data.jbCableLength || ''}`, 'JB Appearance & Cable', 'jbAppearance/jbCableLength');
       } else {
         trackField(53, 'JB Appearance & Cable', null, 'jbAppearance/jbCableLength');
       }
       setIfExists(54, data.siliconGlueWeight, 'Silicon Glue Weight', 'siliconGlueWeight');
-      
+
       setIfExists(55, data.maxWeldingTime, 'Max Welding Time', 'maxWeldingTime');
       setIfExists(56, data.solderingCurrent, 'Soldering Current', 'solderingCurrent');
       // Index 57 (Sr.58): JB Soldering Quality - use jbSolderingQuality
       setIfExists(57, data.jbSolderingQuality, 'JB Soldering Quality', 'jbSolderingQuality');
-      
+
       if (data.glueRatioRef) {
         setSubIfExists(58, { Ref: data.glueRatioRef }, 'Glue Ratio Ref');
       } else {
@@ -1177,29 +1230,29 @@ const IPQCForm = () => {
       } else {
         trackField(60, 'Nozzle Change Time', null, 'nozzleChangeTime1');
       }
-      
+
       if (data.oleVisualCheck1) {
         setIfExists(61, `${data.oleVisualCheck1}, ${data.oleVisualCheck2 || ''}, ${data.oleVisualCheck3 || ''}`, 'OLE Visual Check', 'oleVisualCheck1-3');
       } else {
         trackField(61, 'OLE Visual Check', null, 'oleVisualCheck1-3');
       }
-      
+
       setIfExists(62, data.curingTemperature, 'Curing Temperature', 'curingTemperature');
       setIfExists(63, data.curingHumidity, 'Curing Humidity', 'curingHumidity');
       setIfExists(64, data.curingTime, 'Curing Time', 'curingTime');
     }
-    
+
     else if (pageNumber === 6) {
       // Page 6: Buffing, Cleaning, Flash Tester, Hipot, Post EL (checkpoints 65-74)
       console.log('   📄 Page 6: Processing Buffing to Post EL');
-      
+
       // Index 65 (Sr.66): Buffing Condition - 5 times OK (Corner Edge/Belt condition)
       if (data.buffingCondition) {
         setIfExists(65, data.buffingCondition, 'Buffing Condition', 'buffingCondition');
       } else {
         setIfExists(65, 'OK, OK, OK, OK, OK', 'Buffing Condition', 'buffingCondition');
       }
-      
+
       if (data.cleaningSNo1) {
         setSubIfExists(66, {
           S1: `${data.cleaningSNo1} - ${data.cleaningResult1 || 'ok'}`,
@@ -1211,13 +1264,13 @@ const IPQCForm = () => {
       } else {
         trackField(66, 'Cleaning Check', null, 'cleaningSNo1-5');
       }
-      
+
       setIfExists(67, data.ambientTemp, 'Ambient Temp', 'ambientTemp');
       setIfExists(68, data.moduleTemp, 'Module Temp', 'moduleTemp');
       // Index 69 (Sr.70): Sunsimulator Calibration - OK + barcode
       if (data.sunsimulatorCalibration) {
-        const calibValue = data.sunsimulatorBarcode 
-          ? `OK - ${data.sunsimulatorBarcode}` 
+        const calibValue = data.sunsimulatorBarcode
+          ? `OK - ${data.sunsimulatorBarcode}`
           : data.sunsimulatorCalibration;
         setIfExists(69, calibValue, 'Sun Simulator Calibration', 'sunsimulatorCalibration');
       } else {
@@ -1225,7 +1278,7 @@ const IPQCForm = () => {
       }
       setIfExists(70, data.validation, 'Validation', 'validation');
       setIfExists(71, data.silverRefEL, 'Silver Ref EL', 'silverRefEL');
-      
+
       if (data.hipotSNo1 || data.dcw1) {
         setSubIfExists(72, {
           'Sample 1': data.hipotSNo1 ? `${data.hipotSNo1}: DCW=${data.dcw1 || '-'}` : '',
@@ -1237,13 +1290,13 @@ const IPQCForm = () => {
       } else {
         trackField(72, 'Hipot Test', null, 'hipotSNo1-5/dcw1-5');
       }
-      
+
       if (data.voltage || data.current) {
         setIfExists(73, `${data.voltage || ''} / ${data.current || ''}`, 'Voltage/Current', 'voltage/current');
       } else {
         trackField(73, 'Voltage/Current', null, 'voltage/current');
       }
-      
+
       if (data.elSNo1) {
         setSubIfExists(74, {
           S1: `${data.elSNo1} - ${data.elResult1 || 'ok'}`,
@@ -1256,24 +1309,24 @@ const IPQCForm = () => {
         trackField(74, 'Post EL Check', null, 'elSNo1-5');
       }
     }
-    
+
     else if (pageNumber === 7) {
       // Page 7: RFID, Final Visual, Dimension, Packaging (checkpoints 75-87)
       console.log('   📄 Page 7: Processing RFID to Packaging');
-      
+
       // Index 75 (Sr.76): RFID Position
       setIfExists(75, data.rfidPosition, 'RFID Position', 'rfidPosition');
-      
+
       // Index 76 (Sr.77): Cell & Module Make verification (Cell Make Date mandatory)
       if (data.cellModuleMake || data.cellMakeDate) {
-        const makeInfo = data.cellMakeDate 
+        const makeInfo = data.cellMakeDate
           ? `Module: ${data.cellModuleMake || 'As per BOM'}, Cell Make: ${data.cellMakeDate}`
           : data.cellModuleMake;
         setIfExists(76, makeInfo, 'Cell/Module Make', 'cellModuleMake');
       } else {
         trackField(76, 'Cell/Module Make', null, 'cellModuleMake/cellMakeDate');
       }
-      
+
       // Index 77 (Sr.78): Final Visual Inspection
       if (data.finalVisualSNo1) {
         setSubIfExists(77, {
@@ -1286,7 +1339,7 @@ const IPQCForm = () => {
       } else {
         trackField(77, 'Final Visual Inspection', null, 'finalVisualSNo1-5');
       }
-      
+
       // Index 78 (Sr.79): Back Label Check
       if (data.backlabelSNo1) {
         setSubIfExists(78, {
@@ -1299,31 +1352,31 @@ const IPQCForm = () => {
       } else {
         trackField(78, 'Back Label Check', null, 'backlabelSNo1-5');
       }
-      
+
       // Index 79 (Sr.80): Module Dimension L*W
       setIfExists(79, data.moduleDimensionLW, 'Module Dimension L*W', 'moduleDimensionLW');
-      
+
       // Index 80 (Sr.81): Mounting Hole
       setIfExists(80, data.mountingHole, 'Mounting Hole', 'mountingHole');
-      
+
       // Index 81 (Sr.82): Diagonal Diff
       setIfExists(81, data.diagonalDiff, 'Diagonal Diff', 'diagonalDiff');
-      
+
       // Index 82 (Sr.83): Corner Gap
       setIfExists(82, data.cornerGap, 'Corner Gap', 'cornerGap');
-      
+
       // Index 83 (Sr.84): JB Cable Length
       setIfExists(83, data.jbCableLength, 'JB Cable Length', 'jbCableLength');
-      
+
       // Index 84 (Sr.85): Packaging Label
       setIfExists(84, data.packagingLabel, 'Packaging Label', 'packagingLabel');
-      
+
       // Index 85 (Sr.86): Content In Box
       setIfExists(85, data.contentInBox, 'Content In Box', 'contentInBox');
-      
+
       // Index 86 (Sr.87): Box Condition
       setIfExists(86, data.boxCondition, 'Box Condition', 'boxCondition');
-      
+
       // Index 87 (Sr.88): Pallet Dimension
       setIfExists(87, data.palletDimension, 'Pallet Dimension', 'palletDimension');
     }
@@ -1331,16 +1384,16 @@ const IPQCForm = () => {
     // Update form state
     newFormData.checkpoints = newCheckpoints;
     setFormData(newFormData);
-    
+
     // Update OCR report with this page's results
     setOcrReport(prevReport => [...prevReport, ...pageReport]);
-    
+
     // Log report summary for this page
     const missing = pageReport.filter(r => r.status === 'missing').length;
     const doubtful = pageReport.filter(r => r.status === 'doubtful').length;
     const success = pageReport.filter(r => r.status === 'success').length;
     console.log(`   📊 Page ${pageNumber} OCR Report: ✅ ${success} success, ⚠️ ${doubtful} doubtful, ❌ ${missing} missing`);
-    
+
     console.log(`   ✅ Page ${pageNumber} data saved to form`);
   };
 
@@ -1349,17 +1402,17 @@ const IPQCForm = () => {
     // Use fetch to get PDF as array buffer
     const response = await fetch(pdfUrl);
     if (!response.ok) throw new Error(`Failed to fetch PDF: ${response.status}`);
-    
+
     const contentType = response.headers.get('content-type');
     console.log('📄 PDF Response Content-Type:', contentType);
-    
+
     const arrayBuffer = await response.arrayBuffer();
-    
+
     // Check if we got HTML instead of PDF (server error page)
     const firstBytes = new Uint8Array(arrayBuffer.slice(0, 20));
     const firstChars = String.fromCharCode(...firstBytes);
     console.log('📄 First bytes of response:', firstChars);
-    
+
     if (firstChars.includes('<!DOCTYPE') || firstChars.includes('<html') || firstChars.includes('<HTML')) {
       // Convert to text to see the error
       const decoder = new TextDecoder('utf-8');
@@ -1367,59 +1420,59 @@ const IPQCForm = () => {
       console.error('❌ Received HTML instead of PDF:', htmlContent.substring(0, 500));
       throw new Error('Server returned HTML instead of PDF - file may not exist or requires authentication');
     }
-    
+
     // Load pdf.js dynamically if not available
     const pdfjsLib = window.pdfjsLib || await loadPdfJs();
-    
+
     // Load PDF document
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const page = await pdf.getPage(1);
-    
+
     // Render at high resolution
     const scale = 2.0;
     const viewport = page.getViewport({ scale });
-    
+
     // Create canvas
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     canvas.height = viewport.height;
     canvas.width = viewport.width;
-    
+
     // Render page
     await page.render({
       canvasContext: context,
       viewport: viewport
     }).promise;
-    
+
     // If cropRightHalf is true, crop to right portion of the image
     if (cropRightHalf) {
       console.log('✂️ Cropping RIGHT PORTION of page for better OCR...');
       const cropCanvas = document.createElement('canvas');
       const cropContext = cropCanvas.getContext('2d');
-      
+
       // Crop right 70% (start from 30%) to include Monitoring Result column AND tables
       // The String Length and Cell Gap tables are in middle-right area
       const cropX = Math.floor(canvas.width * 0.30); // Start from 30% to include all data tables
       const cropWidth = canvas.width - cropX;
-      
+
       cropCanvas.width = cropWidth;
       cropCanvas.height = canvas.height;
-      
+
       // Draw cropped portion
       cropContext.drawImage(
         canvas,
         cropX, 0, cropWidth, canvas.height,  // Source rect
         0, 0, cropWidth, canvas.height        // Dest rect
       );
-      
+
       console.log(`✂️ Cropped: ${canvas.width}x${canvas.height} → ${cropWidth}x${canvas.height}`);
-      
+
       // Return cropped image
       return new Promise((resolve) => {
         cropCanvas.toBlob(resolve, 'image/jpeg', 0.95);
       });
     }
-    
+
     // Convert to blob (full image)
     return new Promise((resolve) => {
       canvas.toBlob(resolve, 'image/jpeg', 0.95);
@@ -1431,34 +1484,34 @@ const IPQCForm = () => {
     // Check if we got HTML instead of PDF
     const firstBytes = new Uint8Array(arrayBuffer.slice(0, 20));
     const firstChars = String.fromCharCode(...firstBytes);
-    
+
     if (firstChars.includes('<!DOCTYPE') || firstChars.includes('<html') || firstChars.includes('<HTML')) {
       throw new Error('Received HTML instead of PDF');
     }
-    
+
     // Load pdf.js dynamically if not available
     const pdfjsLib = window.pdfjsLib || await loadPdfJs();
-    
+
     // Load PDF document
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const page = await pdf.getPage(1);
-    
+
     // Render at high resolution
     const scale = 2.0;
     const viewport = page.getViewport({ scale });
-    
+
     // Create canvas
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     canvas.height = viewport.height;
     canvas.width = viewport.width;
-    
+
     // Render page
     await page.render({
       canvasContext: context,
       viewport: viewport
     }).promise;
-    
+
     // Convert to blob
     return new Promise((resolve) => {
       canvas.toBlob(resolve, 'image/jpeg', 0.95);
@@ -1472,11 +1525,11 @@ const IPQCForm = () => {
         resolve(window.pdfjsLib);
         return;
       }
-      
+
       const script = document.createElement('script');
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
       script.onload = () => {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
           'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         resolve(window.pdfjsLib);
       };
@@ -1506,10 +1559,10 @@ const IPQCForm = () => {
     }
 
     setIsSaving(true);
-    
+
     try {
       const checklistId = selectedChecklist._id || selectedChecklist.id || `${selectedChecklist.date}_${selectedChecklist.Line}_${selectedChecklist.Shift}`;
-      
+
       // Prepare data for backend
       const savePayload = {
         checklist_id: checklistId,
@@ -1522,7 +1575,7 @@ const IPQCForm = () => {
         checkpoints_data: formData.checkpoints,
         original_pdf_urls: loadedPdfUrls
       };
-      
+
       // Save to backend database
       const response = await fetch(`${API_BASE_URL}/api/forms/save-by-checklist`, {
         method: 'POST',
@@ -1531,14 +1584,14 @@ const IPQCForm = () => {
         },
         body: JSON.stringify(savePayload)
       });
-      
+
       if (!response.ok) {
         throw new Error('Failed to save form to database');
       }
-      
+
       const result = await response.json();
       console.log('✅ Form saved to database:', result);
-      
+
       // Also save to localStorage as backup
       const savedData = {
         checklistId,
@@ -1550,11 +1603,11 @@ const IPQCForm = () => {
         },
         savedAt: new Date().toISOString()
       };
-      
+
       const allSavedForms = JSON.parse(localStorage.getItem('ipqc_saved_forms') || '{}');
       allSavedForms[checklistId] = savedData;
       localStorage.setItem('ipqc_saved_forms', JSON.stringify(allSavedForms));
-      
+
       // Update processed checklists status
       const updatedProcessed = {
         ...processedChecklists,
@@ -1566,11 +1619,11 @@ const IPQCForm = () => {
       };
       setProcessedChecklists(updatedProcessed);
       localStorage.setItem('ipqc_processed_checklists', JSON.stringify(updatedProcessed));
-      
+
       console.log(`✅ Form saved: ${selectedChecklist.Line} - ${selectedChecklist.Shift}`);
-      
+
       setEditMode(false);
-      
+
     } catch (error) {
       console.error('❌ Error saving form:', error);
       // Fallback to localStorage only if backend fails
@@ -1598,7 +1651,7 @@ const IPQCForm = () => {
   const loadSavedForm = (checklistId) => {
     const allSavedForms = JSON.parse(localStorage.getItem('ipqc_saved_forms') || '{}');
     const savedForm = allSavedForms[checklistId];
-    
+
     if (savedForm) {
       setFormData(savedForm.formData);
       setEditMode(false);
@@ -1611,7 +1664,7 @@ const IPQCForm = () => {
   const getChecklistStatus = (checklist) => {
     const checklistId = checklist._id || checklist.id || `${checklist.date}_${checklist.Line}_${checklist.Shift}`;
     const status = processedChecklists[checklistId];
-    
+
     if (!status) return { processed: false, saved: false };
     return status;
   };
@@ -1649,7 +1702,17 @@ const IPQCForm = () => {
     { name: 'Shadows Into Light', label: 'Shadows Into Light (Light)' },
     { name: 'Kalam', label: 'Kalam (Hindi Style)' },
     { name: 'Covered By Your Grace', label: 'Covered By Your Grace (Messy)' },
-    { name: 'Gloria Hallelujah', label: 'Gloria Hallelujah (Bold)' }
+    { name: 'Gloria Hallelujah', label: 'Gloria Hallelujah (Bold)' },
+    { name: 'Architects Daughter', label: 'Architects Daughter' },
+    { name: 'Permanent Marker', label: 'Permanent Marker (Bold)' },
+    { name: 'Rock Salt', label: 'Rock Salt (Rough)' },
+    { name: 'Handlee', label: 'Handlee (Quick)' },
+    { name: 'Nothing You Could Do', label: 'Nothing You Could Do' },
+    { name: 'Reenie Beanie', label: 'Reenie Beanie (Scrawl)' },
+    { name: 'Just Another Hand', label: 'Just Another Hand' },
+    { name: 'Coming Soon', label: 'Coming Soon (Casual)' },
+    { name: 'Homemade Apple', label: 'Homemade Apple (Messy)' },
+    { name: 'Satisfy', label: 'Satisfy (Flowing)' }
   ];
 
   // Ink color variations (different pen colors people use)
@@ -1664,40 +1727,167 @@ const IPQCForm = () => {
     '#00008b', // Dark blue variant
     '#0a0a0a', // Near black (black pen)
     '#1c1c1c', // Charcoal
+    '#2c2c54', // Dark purple-blue
+    '#1B1464', // Deep indigo
   ];
+
+  // ===== REALISTIC PER-FIELD HANDWRITING SYSTEM =====
+  // Each field gets its own unique variation so it looks like real handwriting
+  // where pressure, angle, speed varies throughout the document
+
+  // Seeded random number generator for consistent per-field randomization
+  const seededRandom = (seed) => {
+    let x = Math.sin(seed * 9301 + 49297) * 49297;
+    x = Math.sin(x * 12345 + 67890) * 67890;
+    return x - Math.floor(x);
+  };
+
+  // Get a unique handwriting style for EACH specific field
+  // Uses checklistId + fieldIndex to create per-field variation
+  // BOLD, BIG fonts with random text positioning inside cells
+  const getFieldHandwritingStyle = (fieldIndex, subKey = '') => {
+    if (!useHandwritingFont) return {};
+    
+    const checklistId = selectedChecklist?.checkListId || 1;
+    
+    // Create unique seed combining checklist + field + subkey
+    const seedBase = String(checklistId).split('').reduce((acc, char) => {
+      return char.charCodeAt(0) + ((acc << 5) - acc);
+    }, 0);
+    const subSeed = subKey ? subKey.split('').reduce((acc, char) => {
+      return char.charCodeAt(0) + ((acc << 3) - acc);
+    }, 0) : 0;
+    const fieldSeed = seedBase + (fieldIndex * 137) + (subSeed * 53);
+    
+    // Pick a primary font - prefer BOLD handwriting fonts
+    const personFontBase = Math.abs(seedBase) % 6;
+    const fontVariation = seededRandom(fieldSeed) > 0.6 ? 1 : 0; // 40% chance of font drift
+    const fontIndex = (personFontBase + fontVariation) % handwritingFonts.length;
+    const font = handwritingFonts[fontIndex].name;
+    
+    // Ink color - blue/black pen
+    const colorIndex = Math.abs(seedBase >> 3) % inkColors.length;
+    const baseColor = inkColors[colorIndex];
+    
+    // SIZE: MUCH BIGGER - 18px to 28px (was 14-19)
+    const sizeRand = seededRandom(fieldSeed + 1);
+    const baseSize = 18 + Math.floor(sizeRand * 10); // 18-28px LARGE
+    
+    // WEIGHT: MUCH HEAVIER - mostly bold/semi-bold (was mix of 300-700)
+    const weightRand = seededRandom(fieldSeed + 2);
+    const weights = [600, 600, 700, 700, 700, 800, 500, 600, 700, 900];
+    const fontWeight = weights[Math.floor(weightRand * weights.length)];
+    
+    // Letter spacing: tight to wide - more variation
+    const spacingRand = seededRandom(fieldSeed + 3);
+    const letterSpacing = (spacingRand * 3.5) - 1.0; // -1px to 2.5px
+    
+    // Slant/skew: handwriting naturally tilts more
+    const skewRand = seededRandom(fieldSeed + 4);
+    const skew = (skewRand * 8) - 4; // -4deg to 4deg
+    
+    // Vertical offset: baseline wander
+    const offsetRand = seededRandom(fieldSeed + 5);
+    const yOffset = (offsetRand * 4) - 2; // -2px to 2px
+    
+    // TEXT INDENT / PADDING: sometimes start from left, sometimes middle, sometimes offset
+    // This makes it look like real handwriting where person writes at different positions
+    const indentRand = seededRandom(fieldSeed + 11);
+    let textIndent = 0;
+    let textAlign = 'left';
+    if (indentRand < 0.35) {
+      // 35% - start from left edge (normal)
+      textIndent = Math.floor(seededRandom(fieldSeed + 12) * 4); // 0-3px
+      textAlign = 'left';
+    } else if (indentRand < 0.65) {
+      // 30% - center aligned (written in middle of cell)
+      textIndent = 0;
+      textAlign = 'center';
+    } else if (indentRand < 0.85) {
+      // 20% - slightly offset from left (small indent)
+      textIndent = 5 + Math.floor(seededRandom(fieldSeed + 13) * 15); // 5-20px indent
+      textAlign = 'left';
+    } else {
+      // 15% - right-ish aligned 
+      textIndent = 0;
+      textAlign = 'right';
+    }
+    
+    // Horizontal nudge
+    const xRand = seededRandom(fieldSeed + 6);
+    const xOffset = (xRand * 3) - 1.5; // -1.5px to 1.5px
+    
+    // Rotation: slight tilt variation - more dramatic
+    const rotRand = seededRandom(fieldSeed + 7);
+    const rotation = (rotRand * 5) - 2.5; // -2.5deg to 2.5deg
+    
+    // Opacity variation: ink darkness varies
+    const opacityRand = seededRandom(fieldSeed + 8);
+    const opacity = 0.85 + (opacityRand * 0.15); // 0.85 to 1.0
+    
+    // Text shadow for ink bleed/pressure effect - THICKER
+    const bleedRand = seededRandom(fieldSeed + 9);
+    const bleedAmount = 0.4 + (bleedRand * 1.0); // 0.4 to 1.4px
+    const bleedOpacity = 0.08 + (bleedRand * 0.2);
+    // Secondary shadow for pen pressure simulation
+    const pressureRand = seededRandom(fieldSeed + 14);
+    const pressureShadow = pressureRand > 0.5 
+      ? `, 0px 0px ${(pressureRand * 2).toFixed(1)}px rgba(0,0,50,${(pressureRand * 0.12).toFixed(2)})` 
+      : '';
+    
+    // Word spacing variation
+    const wordSpaceRand = seededRandom(fieldSeed + 10);
+    const wordSpacing = (wordSpaceRand * 4) - 1; // -1px to 3px
+    
+    return {
+      fontFamily: `'${font}', cursive`,
+      fontSize: `${baseSize}px`,
+      color: baseColor,
+      fontWeight: fontWeight,
+      letterSpacing: `${letterSpacing.toFixed(1)}px`,
+      wordSpacing: `${wordSpacing.toFixed(1)}px`,
+      transform: `skewX(${skew.toFixed(1)}deg) rotate(${rotation.toFixed(1)}deg) translate(${xOffset.toFixed(1)}px, ${yOffset.toFixed(1)}px)`,
+      textShadow: `${bleedAmount.toFixed(1)}px ${bleedAmount.toFixed(1)}px 0px rgba(0,0,0,${bleedOpacity.toFixed(2)})${pressureShadow}`,
+      opacity: opacity,
+      lineHeight: '1.1',
+      transformOrigin: 'left center',
+      textIndent: `${textIndent}px`,
+      textAlign: textAlign,
+    };
+  };
 
   // Generate unique handwriting style based on checklist ID
   // This ensures same checklist always gets same "person's" handwriting
   const getUniqueHandwritingStyle = (checklistId) => {
     if (!useHandwritingFont || !checklistId) return getHandwritingStyle();
-    
+
     // Use checklistId to generate consistent random values
     const hash = String(checklistId).split('').reduce((acc, char) => {
       return char.charCodeAt(0) + ((acc << 5) - acc);
     }, 0);
-    
+
     // Select font based on hash
     const fontIndex = Math.abs(hash) % handwritingFonts.length;
     const font = handwritingFonts[fontIndex].name;
-    
+
     // Select ink color
     const colorIndex = Math.abs(hash >> 3) % inkColors.length;
     const inkColor = inkColors[colorIndex];
-    
-    // Random size variation (12px to 16px)
-    const sizeVariation = 12 + (Math.abs(hash >> 6) % 5);
-    
-    // Random weight (400, 500, 600, 700)
-    const weights = [400, 500, 500, 600, 600, 700];
+
+    // Random size variation - BIGGER (18px to 26px)
+    const sizeVariation = 18 + (Math.abs(hash >> 6) % 9);
+
+    // Random weight - BOLDER (mostly 600-900)
+    const weights = [600, 600, 700, 700, 700, 800];
     const weightIndex = Math.abs(hash >> 9) % weights.length;
     const fontWeight = weights[weightIndex];
-    
+
     // Random letter spacing (-0.5px to 1px)
     const letterSpacing = ((Math.abs(hash >> 12) % 16) - 5) / 10;
-    
+
     // Random slant/skew (-2deg to 2deg)
     const skew = ((Math.abs(hash >> 15) % 5) - 2);
-    
+
     return {
       fontFamily: `'${font}', cursive`,
       fontSize: `${sizeVariation}px`,
@@ -1723,9 +1913,9 @@ const IPQCForm = () => {
     if (!useHandwritingFont) return {};
     return {
       fontFamily: `'${selectedFont}', cursive`,
-      fontSize: '14px',
+      fontSize: '22px',
       color: '#1a237e',
-      fontWeight: '500'
+      fontWeight: '700'
     };
   };
 
@@ -1785,38 +1975,38 @@ const IPQCForm = () => {
   // Export to PDF - Convert inputs to text for proper PDF rendering
   const exportToPDF = async () => {
     if (!formContainerRef.current) return;
-    
+
     setIsGeneratingPDF(true);
-    
+
     try {
       const element = formContainerRef.current;
-      
+
       // Add PDF-specific class for styling
       element.classList.add('pdf-export-mode');
-      
+
       // Hide OCR upload section for PDF
       const ocrSection = element.querySelector('.ocr-upload-section');
       if (ocrSection) ocrSection.style.display = 'none';
-      
+
       // Hide action buttons for PDF
       const actionButtons = element.querySelector('.ipqc-action-buttons');
       if (actionButtons) actionButtons.style.display = 'none';
-      
+
       // Store original input values and replace with spans for PDF
       const inputs = element.querySelectorAll('input[type="text"], input[type="date"], input[type="time"]');
       const originalStates = [];
-      
+
       inputs.forEach((input, index) => {
         const value = input.value || '';
         const parent = input.parentNode;
-        
+
         // Store original state
         originalStates.push({
           input: input,
           parent: parent,
           nextSibling: input.nextSibling
         });
-        
+
         // Create span with value - proper size for PDF
         const span = document.createElement('span');
         span.textContent = value || '-';
@@ -1833,16 +2023,16 @@ const IPQCForm = () => {
           min-width: 80px;
         `;
         span.className = 'pdf-value-span';
-        
+
         // Replace input with span
         parent.replaceChild(span, input);
       });
-      
+
       const opt = {
         margin: [10, 10, 10, 10],
         filename: `IPQC_Form_${formData.date || new Date().toISOString().split('T')[0]}_${formData.shift || 'NA'}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { 
+        html2canvas: {
           scale: 2,
           useCORS: true,
           letterRendering: true,
@@ -1854,7 +2044,7 @@ const IPQCForm = () => {
               clonedElement.style.width = '100%';
               clonedElement.style.padding = '15px';
               clonedElement.style.fontSize = '12px';
-              
+
               // Style stage cards for PDF
               const stageCards = clonedElement.querySelectorAll('.stage-card');
               stageCards.forEach(card => {
@@ -1862,7 +2052,7 @@ const IPQCForm = () => {
                 card.style.pageBreakInside = 'avoid';
                 card.style.border = '1px solid #ddd';
               });
-              
+
               // Style stage tables
               const tables = clonedElement.querySelectorAll('.stage-table');
               tables.forEach(table => {
@@ -1870,7 +2060,7 @@ const IPQCForm = () => {
                 table.style.fontSize = '11px';
                 table.style.borderCollapse = 'collapse';
               });
-              
+
               // Style all cells
               const cells = clonedElement.querySelectorAll('td, th');
               cells.forEach(cell => {
@@ -1878,7 +2068,7 @@ const IPQCForm = () => {
                 cell.style.fontSize = '11px';
                 cell.style.border = '1px solid #ddd';
               });
-              
+
               // Style sub-results grid
               const subItems = clonedElement.querySelectorAll('.sub-item');
               subItems.forEach(item => {
@@ -1886,7 +2076,7 @@ const IPQCForm = () => {
                 item.style.marginBottom = '4px';
                 item.style.background = '#f9f9f9';
               });
-              
+
               // Style header
               const header = clonedElement.querySelector('.ipqc-header');
               if (header) {
@@ -1895,16 +2085,16 @@ const IPQCForm = () => {
             }
           }
         },
-        jsPDF: { 
-          unit: 'mm', 
-          format: 'a3', 
+        jsPDF: {
+          unit: 'mm',
+          format: 'a3',
           orientation: 'landscape'
         },
         pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
       };
 
       await html2pdf().set(opt).from(element).save();
-      
+
       // Restore original inputs
       const spans = element.querySelectorAll('.pdf-value-span');
       spans.forEach((span, index) => {
@@ -1913,16 +2103,16 @@ const IPQCForm = () => {
           span.parentNode.replaceChild(input, span);
         }
       });
-      
+
       // Restore hidden sections
       if (ocrSection) ocrSection.style.display = '';
       if (actionButtons) actionButtons.style.display = '';
       element.classList.remove('pdf-export-mode');
-      
+
       console.log('PDF generated successfully');
     } catch (error) {
       console.error('Error generating PDF:', error);
-      
+
       // Try to restore inputs on error
       try {
         const element = formContainerRef.current;
@@ -1933,13 +2123,13 @@ const IPQCForm = () => {
           input.value = span.textContent === '-' ? '' : span.textContent;
           span.parentNode.replaceChild(input, span);
         });
-        
+
         const ocrSection = element.querySelector('.ocr-upload-section');
         const actionButtons = element.querySelector('.ipqc-action-buttons');
         if (ocrSection) ocrSection.style.display = '';
         if (actionButtons) actionButtons.style.display = '';
         element.classList.remove('pdf-export-mode');
-      } catch (e) {}
+      } catch (e) { }
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -1947,47 +2137,47 @@ const IPQCForm = () => {
 
   // Export to Excel - EXACT CLONE using ExcelJS (preserves ALL formatting)
   const [isExportingExcel, setIsExportingExcel] = useState(false);
-  
+
   const exportToExcel = async () => {
     setIsExportingExcel(true);
-    
+
     try {
       // Load the template Excel file from public folder
       const response = await fetch('/IPQC Check Sheet.xlsx');
       if (!response.ok) {
         throw new Error('Could not load IPQC Excel template. Please make sure "IPQC Check Sheet.xlsx" is in the public folder.');
       }
-      
+
       const templateBuffer = await response.arrayBuffer();
       console.log('📊 Excel Template fetched, size:', templateBuffer.byteLength);
-      
+
       // Use ExcelJS to load workbook - preserves ALL formatting
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(templateBuffer);
-      
+
       console.log('📊 Workbook loaded. Sheets:', workbook.worksheets.map(ws => ws.name));
-      
+
       // Get worksheet by name or index
       let worksheet = workbook.getWorksheet('IPQC');
       if (!worksheet) {
         worksheet = workbook.worksheets[0]; // First sheet
       }
-      
+
       if (!worksheet) {
         throw new Error('No worksheet found in workbook');
       }
-      
+
       console.log('📊 Excel Template Loaded with ExcelJS:');
       console.log('   Sheet:', worksheet.name);
       console.log('   Rows:', worksheet.rowCount);
       console.log('   Columns:', worksheet.columnCount);
-      
+
       // Helper function to set cell value while preserving ALL existing formatting
       const setCellValue = (cellAddress, value) => {
         if (!value || value === '' || value === undefined) return;
-        
+
         const cell = worksheet.getCell(cellAddress);
-        
+
         // Store existing style before setting value
         const existingStyle = {
           font: cell.font ? { ...cell.font } : undefined,
@@ -1996,10 +2186,10 @@ const IPQCForm = () => {
           alignment: cell.alignment ? { ...cell.alignment } : undefined,
           numFmt: cell.numFmt
         };
-        
+
         // Set the value
         cell.value = String(value);
-        
+
         // Restore all formatting
         if (existingStyle.font) cell.font = existingStyle.font;
         if (existingStyle.fill) cell.fill = existingStyle.fill;
@@ -2007,7 +2197,7 @@ const IPQCForm = () => {
         if (existingStyle.alignment) cell.alignment = existingStyle.alignment;
         if (existingStyle.numFmt) cell.numFmt = existingStyle.numFmt;
       };
-      
+
       // Fill header information (Row 4)
       if (formData.date) {
         setCellValue('A4', `Date :- ${formData.date}`);
@@ -2021,25 +2211,25 @@ const IPQCForm = () => {
       if (formData.poNo) {
         setCellValue('I4', formData.poNo);
       }
-      
+
       // IPQC Checkpoint to Excel Cell Mapping (1-indexed rows for ExcelJS)
       const checkpointCellMapping = {
         // Stage 1: Shop Floor (Sr 1-2)
         1: { cells: ['H7'] },   // Temperature
         2: { cells: ['H8'] },   // Humidity
-        
+
         // Stage 2: Glass Loader (Sr 3-4)
         3: { cells: ['H9'] },   // Glass dimension
         4: { cells: ['H10'] },  // Appearance
-        
+
         // Stage 3: EVA/EPE Cutting (Sr 5-7)
         5: { cells: ['H11'] },  // EVA/EPE Type
         6: { cells: ['H12'] },  // EVA/EPE dimension
         7: { cells: ['H13'] },  // EVA/EPE Status
-        
+
         // Stage 4: Eva/EPE Soldering (Sr 8)
         8: { cells: ['H14'], subKeys: ['Temp', 'Quality'], subCells: ['H14', 'N14'] },
-        
+
         // Stage 5: Cell Loading (Sr 9-14)
         9: { cells: ['H15'] },   // Cell Manufacturer
         10: { cells: ['H16'] },  // Cell Size
@@ -2047,7 +2237,7 @@ const IPQCForm = () => {
         12: { cells: ['H18'] },  // Cleanliness
         13: { cells: ['H19'], subKeys: ['ATW Temp'], subCells: ['H19'] },
         14: { cells: ['H20'] },  // Cell Cross cutting
-        
+
         // Stage 6: Tabber & Stringer (Sr 15-20)
         15: { cells: ['H21'], subKeys: ['ATW Temp'], subCells: ['H21'] },
         16: { cells: ['H22'], subKeys: ['TS01A', 'TS01B', 'TS02A', 'TS02B', 'TS03A', 'TS03B', 'TS04A', 'TS04B'], subCells: ['H22', 'I22', 'J22', 'K22', 'L22', 'M22', 'N22', 'O22'] },
@@ -2055,7 +2245,7 @@ const IPQCForm = () => {
         18: { cells: ['H26'], subKeys: ['TS01A', 'TS01B', 'TS02A', 'TS02B', 'TS03A', 'TS03B', 'TS04A', 'TS04B'], subCells: ['H26', 'I26', 'J26', 'K26', 'L26', 'M26', 'N26', 'O26'] },
         19: { cells: ['H28'], subKeys: ['TS01A', 'TS01B', 'TS02A', 'TS02B', 'TS03A', 'TS03B', 'TS04A', 'TS04B'], subCells: ['H28', 'I28', 'J28', 'K28', 'L28', 'M28', 'N28', 'O28'] },
         20: { cells: ['H30'], subKeys: ['Ribbon to cell'], subCells: ['H30'] },
-        
+
         // Stage 7: Auto bussing, layup & Tapping (Sr 21-28)
         21: { cells: ['H32'] },  // String to String Gap
         22: { cells: ['H33'], subKeys: ['TOP', 'Bottom', 'Sides'], subCells: ['H33', 'H34', 'H35'] },
@@ -2065,128 +2255,128 @@ const IPQCForm = () => {
         26: { cells: ['H41'] },  // Top & Bottom Creepage
         27: { cells: ['H42'] },  // Verification of Process
         28: { cells: ['H43'] },  // Quality of auto taping
-        
+
         // Stage 8: Auto RFID Logo/Barcode (Sr 29)
         29: { cells: ['H44'] },  // Position verification
-        
+
         // Stage 9: EVA/EPE cutting 2 (Sr 30-32)
         30: { cells: ['H45'] },  // EVA/EPE Type
         31: { cells: ['H46'] },  // EVA/EPE dimension
         32: { cells: ['H47'] },  // EVA/EPE Status
-        
+
         // Stage 10: Back Glass Loader (Sr 33-34)
         33: { cells: ['H48'] },  // Glass dimension
         34: { cells: ['H50'] },  // No. of Holes
-        
+
         // Stage 11: Auto Busbar Flatten (Sr 35)
         35: { cells: ['H51'] },  // Visual Inspection
-        
+
         // Stage 12: Pre lamination EL (Sr 36)
         36: { cells: ['H53'], subKeys: ['S1', 'S2', 'S3'], subCells: ['H53', 'I53', 'J53'] },
-        
+
         // Stage 13: String Rework Station (Sr 37-38)
         37: { cells: ['H58'] },  // Cleaning
         38: { cells: ['H59'], subKeys: ['Temp', 'Time'], subCells: ['H59', 'L59'] },
-        
+
         // Stage 14: Module Rework Station (Sr 39-41)
         39: { cells: ['H60'] },  // Method of Rework
         40: { cells: ['H61'] },  // Cleaning
         41: { cells: ['H62'], subKeys: ['Temp', 'Time'], subCells: ['H62', 'L62'] },
-        
+
         // Stage 15: Laminator (Sr 42-45)
         42: { cells: ['H63'] },  // Monitoring Parameters
         43: { cells: ['H64'] },  // Cleaning
         44: { cells: ['H65'], subKeys: ['Ref'], subCells: ['H65'] },
         45: { cells: ['H66'], subKeys: ['Ref'], subCells: ['H66'] },
-        
+
         // Stage 16: Auto Tape Removing (Sr 46)
         46: { cells: ['H67'] },  // Visual Check
-        
+
         // Stage 17: Auto Edge Trimming (Sr 47-48)
         47: { cells: ['H68'], subKeys: ['S1', 'S2', 'S3', 'S4', 'S5'], subCells: ['H68', 'H69', 'H70', 'H71', 'H72'] },
         48: { cells: ['H73'] },  // Trimming Blade
-        
+
         // Stage 18: 90° Visual (Sr 49)
         49: { cells: ['H74'], subKeys: ['S1', 'S2', 'S3', 'S4', 'S5'], subCells: ['H74', 'H75', 'H76', 'H77', 'H78'] },
-        
+
         // Stage 19: Framing (Sr 50-53)
         50: { cells: ['H79'] },  // Glue uniformity
         51: { cells: ['H80'], subKeys: ['Ref'], subCells: ['H80'] },
         52: { cells: ['H82'] },  // Long Side Glue
         53: { cells: ['H83'] },  // Anodizing
-        
+
         // Stage 20: Junction Box (Sr 54-55)
         54: { cells: ['H84'] },  // Junction Box Check
         55: { cells: ['H86'] },  // Silicon Glue Weight
-        
+
         // Stage 21: Auto JB (Sr 56-58)
         56: { cells: ['H87'] },  // Max Welding time
         57: { cells: ['H88'] },  // Soldering current
         58: { cells: ['H89'] },  // Soldering Quality
-        
+
         // Stage 22: JB Potting (Sr 59-61)
         59: { cells: ['H90'], subKeys: ['Ref'], subCells: ['H90'] },
         60: { cells: ['H91'] },  // Potting weight
         61: { cells: ['H92'], subKeys: ['Time'], subCells: ['H92'] },
-        
+
         // Stage 23: OLE Potting Inspection (Sr 62)
         62: { cells: ['H93'] },  // Visual Check
-        
+
         // Stage 24: Curing (Sr 63-65)
         63: { cells: ['H94'] },  // Temperature
         64: { cells: ['H95'] },  // Humidity
         65: { cells: ['H96'] },  // Curing Time
-        
+
         // Stage 25: Buffing (Sr 66)
         66: { cells: ['H97'] },  // Corner Edge
-        
+
         // Stage 26: Cleaning (Sr 67)
         67: { cells: ['H98'], subKeys: ['S1', 'S2', 'S3', 'S4', 'S5'], subCells: ['H98', 'H99', 'H100', 'H101', 'H102'] },
-        
+
         // Stage 27: Flash Tester (Sr 68-72)
         68: { cells: ['H103'] }, // Ambient Temp
         69: { cells: ['H104'] }, // Module Temp
         70: { cells: ['H105'] }, // Sunsimulator
         71: { cells: ['H106'] }, // Validation
         72: { cells: ['H107'] }, // Silver Ref EL
-        
+
         // Stage 28: Hipot Test (Sr 73)
         73: { cells: ['H108'], subKeys: ['Sample 1', 'Sample 2', 'Sample 3', 'Sample 4', 'Sample 5'], subCells: ['H108', 'H109', 'H110', 'H111', 'H112'] },
-        
+
         // Stage 29: Post EL (Sr 74-75)
         74: { cells: ['H113'] }, // Voltage & Current
         75: { cells: ['H114'], subKeys: ['S1', 'S2', 'S3'], subCells: ['H114', 'H115', 'H116'] },
-        
+
         // Stage 30: RFID (Sr 76-77)
         76: { cells: ['H119'] }, // RFID Position
         77: { cells: ['H120'] }, // Cell & Module Make
-        
+
         // Stage 31: Final Visual (Sr 78-79)
         78: { cells: ['H121'], subKeys: ['S1', 'S2', 'S3', 'S4', 'S5'], subCells: ['H121', 'H122', 'H123', 'H124', 'H125'] },
         79: { cells: ['H126'], subKeys: ['S1', 'S2', 'S3', 'S4', 'S5'], subCells: ['H126', 'H127', 'H128', 'H129', 'H130'] },
-        
+
         // Stage 32: Dimension (Sr 80-84)
         80: { cells: ['H131'] }, // L*W & Profile
         81: { cells: ['H132'] }, // Mounting Hole
         82: { cells: ['H133'] }, // Diagonal Diff
         83: { cells: ['H134'] }, // Corner Gap
         84: { cells: ['H135'] }, // JB Cable length
-        
+
         // Stage 33: Packaging (Sr 85-88)
         85: { cells: ['H136'] }, // Packaging Label
         86: { cells: ['H137'] }, // Content in Box
         87: { cells: ['H138'] }, // Box Condition
         88: { cells: ['H139'] }  // Pallet dimension
       };
-      
+
       // Fill checkpoints data
       let filledCount = 0;
-      
+
       // Debug: Log all form data first
       console.log('========= EXCEL EXPORT DEBUG =========');
       console.log('📋 Header:', { date: formData.date, time: formData.time, shift: formData.shift, poNo: formData.poNo });
       console.log('📋 Total Checkpoints:', formData.checkpoints.length);
-      
+
       // Log all checkpoints that have data
       formData.checkpoints.forEach((cp, idx) => {
         const sr = cp.subResults || {};
@@ -2195,25 +2385,25 @@ const IPQCForm = () => {
           console.log(`📌 Index ${idx}, SR ${cp.sr}: ${cp.checkpoint}`, sr);
         }
       });
-      
+
       console.log('========= STARTING CELL FILL =========');
-      
+
       formData.checkpoints.forEach((checkpoint, index) => {
         const mapping = checkpointCellMapping[checkpoint.sr];
         if (!mapping) {
           return;
         }
-        
+
         const subResults = checkpoint.subResults || {};
         const resultValue = subResults.result;
         const hasSubKeys = Object.keys(subResults).filter(k => k !== 'result' && subResults[k]).length > 0;
-        
+
         // Only log if there's data
         if (resultValue || hasSubKeys) {
           console.log(`🔍 Processing SR ${checkpoint.sr}: ${checkpoint.checkpoint}`);
           console.log(`   Data:`, subResults);
         }
-        
+
         // First check: if there's a 'result' key, fill the first cell
         if (resultValue !== undefined && resultValue !== '' && resultValue !== null) {
           const cellAddr = mapping.cells[0];
@@ -2221,7 +2411,7 @@ const IPQCForm = () => {
           setCellValue(cellAddr, resultValue);
           filledCount++;
         }
-        
+
         // Second check: if there are sub-fields mapping
         if (mapping.subKeys && mapping.subCells) {
           mapping.subKeys.forEach((key, idx) => {
@@ -2233,7 +2423,7 @@ const IPQCForm = () => {
             }
           });
         }
-        
+
         // Third check: fill any other keys in subResults
         const otherKeys = Object.keys(subResults).filter(k => k !== 'result' && (!mapping.subKeys || !mapping.subKeys.includes(k)));
         otherKeys.forEach((key, idx) => {
@@ -2246,18 +2436,18 @@ const IPQCForm = () => {
           }
         });
       });
-      
+
       console.log(`========= FILL COMPLETE: ${filledCount} cells =========`);
-      
+
       // Generate filename with form details
       const filename = `IPQC_Filled_${formData.date || new Date().toISOString().split('T')[0]}_${formData.shift || 'NA'}_${selectedChecklist?.lineName || 'Unknown'}.xlsx`;
-      
+
       // Write workbook to buffer - ExcelJS preserves ALL formatting automatically
       const outputBuffer = await workbook.xlsx.writeBuffer();
-      
+
       // Download the file
-      const blob = new Blob([outputBuffer], { 
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      const blob = new Blob([outputBuffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -2267,9 +2457,9 @@ const IPQCForm = () => {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       console.log(`✅ Excel exported: ${filename}, Cells filled: ${filledCount}`);
-      
+
     } catch (error) {
       console.error('Error exporting to Excel:', error);
     } finally {
@@ -2280,37 +2470,37 @@ const IPQCForm = () => {
   // Test Export - Fill dummy data to verify Excel writing works
   const testExportToExcel = async () => {
     setIsExportingExcel(true);
-    
+
     try {
       console.log('🧪 TEST: Fetching template...');
       const response = await fetch('/IPQC Check Sheet.xlsx');
       if (!response.ok) {
         throw new Error('Could not load IPQC Excel template');
       }
-      
+
       const templateBuffer = await response.arrayBuffer();
       console.log('🧪 TEST: Template loaded, size:', templateBuffer.byteLength);
-      
+
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(templateBuffer);
-      
+
       console.log('🧪 TEST: Workbook loaded');
       console.log('🧪 TEST: Sheet names:', workbook.worksheets.map(ws => ws.name));
       console.log('🧪 TEST: Sheet count:', workbook.worksheets.length);
-      
+
       // Get worksheet by name or index
       let worksheet = workbook.getWorksheet('IPQC');
       if (!worksheet) {
         worksheet = workbook.worksheets[0]; // First sheet
       }
-      
+
       if (!worksheet) {
         throw new Error('No worksheet found in workbook. Sheets: ' + workbook.worksheets.map(ws => ws.name).join(', '));
       }
-      
+
       console.log('🧪 TEST: Worksheet found:', worksheet.name);
       console.log('🧪 TEST: Row count:', worksheet.rowCount);
-      
+
       // Test: Write to some cells with dummy data
       const testData = [
         { cell: 'A4', value: 'Date :- 2026-01-16' },
@@ -2326,7 +2516,7 @@ const IPQCForm = () => {
         { cell: 'H15', value: 'AIKO 23.8%' },
         { cell: 'H20', value: 'OK - Equal cutting' },
       ];
-      
+
       testData.forEach(({ cell, value }) => {
         try {
           const cellObj = worksheet.getCell(cell);
@@ -2336,10 +2526,10 @@ const IPQCForm = () => {
           console.error(`❌ Failed to write ${cell}:`, e);
         }
       });
-      
+
       const outputBuffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([outputBuffer], { 
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      const blob = new Blob([outputBuffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -2349,9 +2539,9 @@ const IPQCForm = () => {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       console.log('🧪 TEST Excel exported with test data');
-      
+
     } catch (error) {
       console.error('Test export error:', error);
     } finally {
@@ -2362,17 +2552,17 @@ const IPQCForm = () => {
   // Smart Export to Excel using LLM AI mapping
   const [isSmartExporting, setIsSmartExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState('');
-  
+
   const smartExportToExcel = async () => {
     setIsSmartExporting(true);
     setExportProgress('Starting...');
-    
+
     try {
       const result = await exportIPQCToExcel(formData, (progress) => {
         setExportProgress(progress);
         console.log('📊 Export Progress:', progress);
       });
-      
+
       // Download the file
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement('a');
@@ -2382,11 +2572,11 @@ const IPQCForm = () => {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       console.log('🤖 LLM Mappings Used:', result.mappings);
-      
+
       console.log(`✅ Smart Excel Export Complete: ${result.filename}`);
-      
+
     } catch (error) {
       console.error('Smart Export Error:', error);
     } finally {
@@ -2395,14 +2585,178 @@ const IPQCForm = () => {
     }
   };
 
+  // ========== HANDWRITTEN EXPORT FUNCTIONS ==========
+
+  // Export to Excel with handwritten blue pen style
+  const exportHandwrittenExcel = async () => {
+    if (!formData || !selectedChecklist) {
+      console.log('⚠️ Please load a checklist first');
+      return;
+    }
+
+    setIsExportingHandwrittenExcel(true);
+
+    try {
+      console.log('📝 Generating handwritten Excel...');
+      const checklistId = selectedChecklist._id || selectedChecklist.id ||
+        `${selectedChecklist.date}_${selectedChecklist.Line}_${selectedChecklist.Shift}`;
+
+      await generateHandwrittenIPQCExcel(formData, { checklistId });
+
+      console.log('✅ Handwritten Excel exported successfully!');
+    } catch (error) {
+      console.error('❌ Handwritten Excel export error:', error);
+      alert('Error exporting handwritten Excel: ' + error.message);
+    } finally {
+      setIsExportingHandwrittenExcel(false);
+    }
+  };
+
+  // Export to PDF with handwritten blue pen style
+  const exportHandwrittenPDF = async () => {
+    if (!formData || !selectedChecklist) {
+      console.log('⚠️ Please load a checklist first');
+      return;
+    }
+
+    setIsExportingHandwrittenPDF(true);
+
+    try {
+      console.log('📝 Generating handwritten PDF...');
+      const checklistId = selectedChecklist._id || selectedChecklist.id ||
+        `${selectedChecklist.date}_${selectedChecklist.Line}_${selectedChecklist.Shift}`;
+
+      // Generate PDF from HTML (Excel-style layout)
+      await generateHandwrittenPDF(formData, {
+        checklistId,
+        // formElement removed - will use HTML generation
+        filename: `IPQC_${formData.date || 'export'}_${formData.shift || 'Day'}_Handwritten.pdf`
+      });
+
+      console.log('✅ Handwritten PDF exported successfully!');
+    } catch (error) {
+      console.error('❌ Handwritten PDF export error:', error);
+      alert('Error exporting handwritten PDF: ' + error.message);
+    } finally {
+      setIsExportingHandwrittenPDF(false);
+    }
+  };
+
+  // ========== TEST HANDWRITTEN EXPORT (Without Backend) ==========
+  const testHandwrittenExport = async () => {
+    setIsExportingHandwrittenExcel(true);
+
+    // Sample IPQC data for testing
+    const sampleFormData = {
+      date: '2026-01-22',
+      time: '08:15',
+      shift: 'Day',
+      poNo: 'L3',
+      checkpoints: [
+        { sr: 1, stage: 'Shop Floor', checkpoint: 'Temperature', subResults: { result: '23.0°C' } },
+        { sr: 2, stage: 'Shop Floor', checkpoint: 'Humidity', subResults: { result: '39%' } },
+        { sr: 3, stage: 'Glass Loader', checkpoint: 'Glass dimension', subResults: { result: '(2272×1128×8.0) mm' } },
+        { sr: 4, stage: 'Glass Loader', checkpoint: 'Appearance', subResults: { result: 'OK' } },
+        { sr: 5, stage: 'EVA/EPE Cutting', checkpoint: 'EVA/EPE Type', subResults: { result: 'EP-308' } },
+        { sr: 6, stage: 'EVA/EPE Cutting', checkpoint: 'EVA/EPE dimension', subResults: { result: '(2279×1125×0.5) mm' } },
+        { sr: 7, stage: 'EVA/EPE Cutting', checkpoint: 'EVA/EPE Status', subResults: { result: 'OK/19-11-2025' } },
+        { sr: 8, stage: 'Eva/EPE Soldering', checkpoint: 'Soldering Temp', subResults: { result: '411°C' } },
+        { sr: 9, stage: 'Cell Loading', checkpoint: 'Cell Manufacturer', subResults: { result: 'Salon CPa4 25.50%' } },
+        { sr: 10, stage: 'Cell Loading', checkpoint: 'Cell Size', subResults: { result: '(182.31×91.93) mm' } },
+        { sr: 11, stage: 'Cell Loading', checkpoint: 'Cell Condition', subResults: { result: 'OK' } },
+        { sr: 12, stage: 'Cell Loading', checkpoint: 'Cleanliness', subResults: { result: 'Clean' } },
+        { sr: 14, stage: 'Cell Loading', checkpoint: 'Cell Cross cutting', subResults: { result: 'Equal' } },
+        {
+          sr: 16, stage: 'Tabber & stringer', checkpoint: 'Visual Check', subResults: {
+            'TS01A': 'OK', 'TS01B': 'OK', 'TS02A': 'OK', 'TS02B': 'OK',
+            'TS03A': 'OK', 'TS03B': 'OK', 'TS04A': 'OK', 'TS04B': 'OK'
+          }
+        },
+        {
+          sr: 19, stage: 'Tabber & stringer', checkpoint: 'Cell to Cell Gap', subResults: {
+            'TS01A': '0.80', 'TS01B': '0.79', 'TS02A': '0.82', 'TS02B': '0.84',
+            'TS03A': '0.86', 'TS03B': '0.79', 'TS04A': '0.77', 'TS04B': '0.80'
+          }
+        },
+        { sr: 21, stage: 'Auto bussing', checkpoint: 'String to String Gap', subResults: { result: '1.53 mm' } },
+        {
+          sr: 22, stage: 'Auto bussing', checkpoint: 'Cell edge to Glass edge', subResults: {
+            'TOP': '10.60 mm', 'Bottom': '10.45 mm', 'Sides': '13.70 mm'
+          }
+        },
+        { sr: 37, stage: 'String Rework', checkpoint: 'Cleaning & sponge', subResults: { result: 'Wet and Clean' } },
+        { sr: 38, stage: 'String Rework', checkpoint: 'Soldering Iron Temp', subResults: { result: '421°C' } },
+        { sr: 39, stage: 'Module Rework', checkpoint: 'Method of Rework', subResults: { result: 'Manual' } },
+        { sr: 63, stage: 'Curing', checkpoint: 'Temperature', subResults: { result: '23.4°C' } },
+        { sr: 64, stage: 'Curing', checkpoint: 'Humidity', subResults: { result: '58%' } },
+        { sr: 65, stage: 'Curing', checkpoint: 'Curing Time', subResults: { result: '4 hours' } },
+      ]
+    };
+
+    try {
+      console.log('🧪 Testing handwritten Excel export with sample data...');
+      await generateHandwrittenIPQCExcel(sampleFormData, { checklistId: 'test_sample_001' });
+      console.log('✅ Test handwritten Excel exported!');
+      alert('✅ Test Excel exported successfully! Check your downloads folder.');
+    } catch (error) {
+      console.error('❌ Test export error:', error);
+      alert('Error: ' + error.message);
+    } finally {
+      setIsExportingHandwrittenExcel(false);
+    }
+  };
+
+  // ========== TEST HANDWRITTEN PDF EXPORT (Without Backend) ==========
+  const testHandwrittenPDFExport = async () => {
+    setIsExportingHandwrittenPDF(true);
+
+    // Sample IPQC data for testing
+    const sampleFormData = {
+      date: '2026-01-22',
+      time: '08:15',
+      shift: 'Day',
+      poNo: 'L3',
+      checkpoints: [
+        { sr: 1, stage: 'Shop Floor', checkpoint: 'Temperature', subResults: { result: '23.0°C' } },
+        { sr: 2, stage: 'Shop Floor', checkpoint: 'Humidity', subResults: { result: '39%' } },
+        { sr: 3, stage: 'Glass Loader', checkpoint: 'Glass dimension', subResults: { result: '(2272×1128×8.0) mm' } },
+        { sr: 4, stage: 'Glass Loader', checkpoint: 'Appearance', subResults: { result: 'OK' } },
+        { sr: 5, stage: 'EVA/EPE Cutting', checkpoint: 'EVA/EPE Type', subResults: { result: 'EP-308' } },
+        { sr: 9, stage: 'Cell Loading', checkpoint: 'Cell Manufacturer', subResults: { result: 'Salon CPa4 25.50%' } },
+        { sr: 11, stage: 'Cell Loading', checkpoint: 'Cell Condition', subResults: { result: 'OK' } },
+        { sr: 21, stage: 'Auto bussing', checkpoint: 'String to String Gap', subResults: { result: '1.53 mm' } },
+        { sr: 37, stage: 'String Rework', checkpoint: 'Cleaning & sponge', subResults: { result: 'Wet and Clean' } },
+        { sr: 63, stage: 'Curing', checkpoint: 'Temperature', subResults: { result: '23.4°C' } },
+      ]
+    };
+
+    try {
+      console.log('🧪 Testing handwritten PDF export with sample data...');
+      await generateHandwrittenPDF(sampleFormData, {
+        checklistId: 'test_sample_001',
+        filename: 'IPQC_Test_Handwritten.pdf'
+      });
+      console.log('✅ Test handwritten PDF exported!');
+      alert('✅ Test PDF exported successfully! Check your downloads folder.');
+    } catch (error) {
+      console.error('❌ Test PDF export error:', error);
+      alert('Error: ' + error.message);
+    } finally {
+      setIsExportingHandwrittenPDF(false);
+    }
+  };
+
   // OCR Upload and Processing - Multiple Files
+
+
+
   const handleOCRUpload = async (event) => {
     const files = Array.from(event.target.files);
     if (!files || files.length === 0) return;
 
     setIsProcessingOCR(true);
     setOcrProgress({ current: 0, total: files.length });
-    
+
     let allExtractedText = '';
 
     try {
@@ -2410,9 +2764,9 @@ const IPQCForm = () => {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setOcrProgress({ current: i + 1, total: files.length });
-        
+
         console.log(`Processing file ${i + 1}/${files.length}: ${file.name}`);
-        
+
         try {
           const text = await processFile(file);
           allExtractedText += `\n--- Page ${i + 1} ---\n${text}\n`;
@@ -2423,10 +2777,10 @@ const IPQCForm = () => {
       }
 
       console.log('All OCR Extracted Text:', allExtractedText);
-      
+
       // Parse and update form with all extracted data
       parseAndUpdateForm(allExtractedText);
-      
+
       console.log(`✅ OCR completed! Processed ${files.length} page(s)`);
     } catch (err) {
       console.error('Upload Error:', err);
@@ -2457,422 +2811,627 @@ const IPQCForm = () => {
     });
   };
 
-  const parseAndUpdateForm = (text) => {
-    console.log('=== Starting IPQC Parser (All 33 Stages) ===');
-    console.log('🚫 NO DEFAULT VALUES - Only actual OCR data will be used');
-    
+  /**
+   * Apply AI batch-mapped data directly to form
+   * @param {Object} mappedData - Data from batchAIMapper with field:value pairs
+   */
+  const applyMappedDataToForm = (mappedData) => {
+    console.log('=== Applying AI Batch Mapped Data ===');
+    console.log('📊 Total fields:', Object.keys(mappedData).length);
+
     const newFormData = { ...formData };
     const newCheckpoints = [...newFormData.checkpoints];
 
-    // Parse ALL stages using trained parser
-    console.log('🔍 Parsing All 33 Stages with trained parser...');
-    const data = parseIPQCAllStages(text);
-    console.log('✅ Parsed Data:', data);
-
-    // NO DEFAULT VALUES - Only use actual OCR extracted data
-    // Helper function to set result ONLY if value exists
+    // Helper to set checkpoint result
     const setResult = (index, value) => {
+      if (!newCheckpoints[index] || !value || !value.toString().trim()) return;
       if (!newCheckpoints[index].subResults) {
         newCheckpoints[index].subResults = {};
       }
-      if (value && value.toString().trim()) {
-        newCheckpoints[index].subResults['result'] = value;
-        console.log(`✅ Checkpoint ${index + 1}: ${value}`);
-      } else {
-        console.log(`❌ Checkpoint ${index + 1}: No OCR data found`);
-      }
+      newCheckpoints[index].subResults['result'] = value;
     };
 
-    // Helper to set subResults ONLY if values exist
-    const setSubResults = (index, dataObj) => {
-      if (!dataObj || Object.keys(dataObj).length === 0) {
-        console.log(`❌ Checkpoint ${index + 1}: No subResults data found`);
-        return;
-      }
-      
+    // Helper to set sub-results
+    const setSubResults = (index, subResultsObj) => {
+      if (!newCheckpoints[index] || !subResultsObj) return;
       if (!newCheckpoints[index].subResults) {
         newCheckpoints[index].subResults = {};
       }
-      
-      let hasValue = false;
-      for (const key in dataObj) {
-        if (dataObj[key] && dataObj[key].toString().trim()) {
-          newCheckpoints[index].subResults[key] = dataObj[key];
-          hasValue = true;
+      Object.entries(subResultsObj).forEach(([key, val]) => {
+        if (val && val.toString().trim()) {
+          newCheckpoints[index].subResults[key] = val;
         }
-      }
-      
-      if (hasValue) {
-        console.log(`✅ Checkpoint ${index + 1} subResults set:`, dataObj);
-      } else {
-        console.log(`❌ Checkpoint ${index + 1}: Empty subResults data`);
-      }
+      });
     };
 
-    // ======== HEADER INFO ========
-    // Extract date from text
-    const dateMatch = text.match(/Date\s*[:-]?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
-    if (dateMatch) newFormData.date = dateMatch[1];
-    
-    // Extract shift
-    const shiftMatch = text.match(/Shift\s*[:-]?\s*(Night|Day|Morning|Evening)/i);
-    if (shiftMatch) newFormData.shift = shiftMatch[1];
-    
-    // Extract time
-    if (data.temperatureTime) newFormData.time = data.temperatureTime;
+    // ========== HEADER INFO ==========
+    if (mappedData.date) newFormData.date = mappedData.date;
+    if (mappedData.time) newFormData.time = mappedData.time;
+    if (mappedData.shift) newFormData.shift = mappedData.shift;
+    if (mappedData.operator) newFormData.checkedBy = mappedData.operator;
+    if (mappedData.batchNo) newFormData.poNo = mappedData.batchNo;
+    if (mappedData.poNo) newFormData.poNo = mappedData.poNo;
+    if (mappedData.lotNumber) newFormData.lotNumber = mappedData.lotNumber;
+    if (mappedData.docNo) newFormData.docNo = mappedData.docNo;
 
-    // ======== STAGE 1: Shop Floor (sr 1-2, index 0-1) ========
-    setResult(0, data.temperature);
-    if (data.temperatureTime) {
-      if (!newCheckpoints[0].subResults) newCheckpoints[0].subResults = {};
-      newCheckpoints[0].subResults['Time'] = data.temperatureTime;
-    }
-    setResult(1, data.humidity);
-    if (data.humidityTime) {
-      if (!newCheckpoints[1].subResults) newCheckpoints[1].subResults = {};
-      newCheckpoints[1].subResults['Time'] = data.humidityTime;
-    }
+    // ========== STAGE 1: Shop Floor (sr 1-2, index 0-1) ==========
+    setResult(0, mappedData.temperature);
+    if (mappedData.temperatureTime) setSubResults(0, { 'Time': mappedData.temperatureTime });
+    setResult(1, mappedData.humidity);
+    if (mappedData.humidityTime) setSubResults(1, { 'Time': mappedData.humidityTime });
 
-    // ======== STAGE 2: Glass Loader (sr 3-4, index 2-3) ========
-    setResult(2, data.frontGlassDimension);
-    setResult(3, data.appearance);
+    // ========== STAGE 2: Glass Loader (sr 3-4, index 2-3) ==========
+    setResult(2, mappedData.frontGlassDimension);
+    setResult(3, mappedData.appearance);
 
-    // ======== STAGE 3: EVA Cutting (sr 5-7, index 4-6) ========
-    setResult(4, data.eva1Type);
-    setResult(5, data.eva1Dimension);
-    setResult(6, data.evaManufacturingDate ? `OK / ${data.evaManufacturingDate}` : data.evaStatusOk);
+    // ========== STAGE 3: EVA Cutting (sr 5-7, index 4-6) ==========
+    setResult(4, mappedData.eva1Type);
+    setResult(5, mappedData.eva1Dimension);
+    setResult(6, mappedData.evaManufacturingDate || mappedData.evaStatus || mappedData.evaStatusOk);
+    if (mappedData.evaLotNo) setSubResults(6, { 'Lot No': mappedData.evaLotNo });
 
-    // ======== STAGE 3.5: EVA Soldering at edge (sr 8, index 7) ========
-    if (data.evaSolderingTemp || data.solderingTemperature) {
-      setSubResults(7, { 'Temp': data.evaSolderingTemp || data.solderingTemperature, 'Quality': data.solderingQuality || '' });
-    }
-
-    // ======== STAGE 4: Cell Loading (sr 9-14, index 8-13) ========
-    if (data.cellManufacturer || data.cellEfficiency) {
-      setResult(8, `${data.cellManufacturer || ''} ${data.cellEfficiency || ''}`.trim());
-    }
-    setResult(9, data.cellSize);
-    setResult(10, data.cellCondition);
-    setResult(11, data.cleanliness);
-    // Verification of Process Parameter (sr 13, index 12)
-    if (data.processVerification || data.atwTemp) {
-      setSubResults(12, { 'ATW Temp': data.atwTemp || '' });
-      setResult(12, data.processVerification);
-    }
-    setResult(13, data.crossCutting);
-
-    // ======== STAGE 6: Tabber & Stringer (sr 15-20, index 14-19) ========
-    if (data.tabberProcessVerification || data.tabberAtwTemp) {
-      setSubResults(14, { 'ATW Temp': data.tabberAtwTemp || '' });
-      setResult(14, data.tabberProcessVerification);
-    }
-    
-    // Visual Check (sr 16, index 15)
-    if (data.visualCheckTS01A) {
-      setSubResults(15, {
-        'TS01A': data.visualCheckTS01A, 'TS01B': data.visualCheckTS01B,
-        'TS02A': data.visualCheckTS02A, 'TS02B': data.visualCheckTS02B,
-        'TS03A': data.visualCheckTS03A, 'TS03B': data.visualCheckTS03B,
-        'TS04A': data.visualCheckTS04A, 'TS04B': data.visualCheckTS04B
+    // ========== STAGE 4: EVA/EPE Soldering at Edge (sr 8, index 7) ==========
+    if (mappedData.evaSolderingTemp || mappedData.evaSolderingQuality) {
+      setSubResults(7, { 
+        'Temp': mappedData.evaSolderingTemp,
+        'Quality': mappedData.evaSolderingQuality || 'OK'
       });
     }
-    
-    // EL Image (sr 17, index 16)
-    if (data.elImageTS01A) {
-      setSubResults(16, {
-        'TS01A': data.elImageTS01A, 'TS01B': data.elImageTS01B,
-        'TS02A': data.elImageTS02A, 'TS02B': data.elImageTS02B,
-        'TS03A': data.elImageTS03A, 'TS03B': data.elImageTS03B,
-        'TS04A': data.elImageTS04A, 'TS04B': data.elImageTS04B
+
+    // ========== STAGE 5: Cell Loading (sr 9-14, index 8-13) ==========
+    if (mappedData.cellManufacturer || mappedData.cellEfficiency) {
+      setResult(8, `${mappedData.cellManufacturer || ''} ${mappedData.cellEfficiency || ''}`.trim());
+    }
+    setResult(9, mappedData.cellSize);
+    setResult(10, mappedData.cellCondition);
+    setResult(11, mappedData.cleanliness);
+    if (mappedData.cellLotNo) setSubResults(8, { 'Lot No': mappedData.cellLotNo });
+
+    // ========== STAGE 5: ATW/Cell Loading (sr 12-14, index 11-13) ==========
+    if (mappedData.atwTemp) setSubResults(11, { 'ATW Temp': mappedData.atwTemp });
+    if (mappedData.crossCutting) setSubResults(12, { 'Cross Cutting': mappedData.crossCutting });
+    if (mappedData.processVerification) setSubResults(12, { 'Process': mappedData.processVerification });
+
+    // ========== SERIAL NUMBERS / SAMPLES (sr 12-14, index 11-13) ==========
+    if (mappedData.sample1 || mappedData.serialNo1) {
+      setSubResults(12, { 
+        'S1': mappedData.sample1 || mappedData.serialNo1,
+        'S2': mappedData.sample2 || mappedData.serialNo2,
+        'S3': mappedData.sample3 || mappedData.serialNo3,
+        'S4': mappedData.sample4,
+        'S5': mappedData.sample5
       });
     }
-    // String Length (sr 18, index 17)
-    if (data.stringLengthTS01A) {
-      setSubResults(17, {
-        'TS01A': data.stringLengthTS01A, 'TS01B': data.stringLengthTS01B,
-        'TS02A': data.stringLengthTS02A, 'TS02B': data.stringLengthTS02B,
-        'TS03A': data.stringLengthTS03A, 'TS03B': data.stringLengthTS03B,
-        'TS04A': data.stringLengthTS04A, 'TS04B': data.stringLengthTS04B
+    if (mappedData.moduleSerial) setSubResults(13, { 'Module Serial': mappedData.moduleSerial });
+
+    // ========== STAGE 6: Tabber & Stringer (sr 15-20, index 14-19) ==========
+    if (mappedData.tabberAtwTemp || mappedData.atwTemp) setSubResults(14, { 'ATW Temp': mappedData.tabberAtwTemp || mappedData.atwTemp });
+    if (mappedData.visualCheckTS01A) {
+      setSubResults(15, { 
+        'TS01A': mappedData.visualCheckTS01A, 
+        'TS01B': mappedData.visualCheckTS01B,
+        'TS02A': mappedData.visualCheckTS02A,
+        'TS02B': mappedData.visualCheckTS02B,
+        'TS03A': mappedData.visualCheckTS03A,
+        'TS03B': mappedData.visualCheckTS03B,
+        'TS04A': mappedData.visualCheckTS04A,
+        'TS04B': mappedData.visualCheckTS04B
       });
     }
-    // Cell Gap (sr 19, index 18)
-    if (data.cellGapTS01A) {
-      setSubResults(18, {
-        'TS01A': data.cellGapTS01A, 'TS01B': data.cellGapTS01B,
-        'TS02A': data.cellGapTS02A, 'TS02B': data.cellGapTS02B,
-        'TS03A': data.cellGapTS03A, 'TS03B': data.cellGapTS03B,
-        'TS04A': data.cellGapTS04A, 'TS04B': data.cellGapTS04B
+    if (mappedData.elImageTS01A) {
+      setSubResults(16, { 
+        'TS01A': mappedData.elImageTS01A, 
+        'TS01B': mappedData.elImageTS01B,
+        'TS02A': mappedData.elImageTS02A,
+        'TS02B': mappedData.elImageTS02B,
+        'TS03A': mappedData.elImageTS03A,
+        'TS03B': mappedData.elImageTS03B,
+        'TS04A': mappedData.elImageTS04A,
+        'TS04B': mappedData.elImageTS04B
       });
     }
-    // Peel Strength (sr 20, index 19) - has 'Ribbon to cell' subResult
-    if (data.tabberPeelStrength) {
-      setSubResults(19, { 'Ribbon to cell': data.tabberPeelStrength });
-    }
-
-    // ======== STAGE 7: Auto Bussing (sr 21-28, index 20-27) ========
-    setResult(20, data.stringToStringGap);
-    // Cell edge to Glass edge distance (sr 22, index 21)
-    if (data.cellEdgeTop || data.cellEdgeBottom || data.cellEdgeSides) {
-      setSubResults(21, {
-        'TOP': data.cellEdgeTop || '',
-        'Bottom': data.cellEdgeBottom || '',
-        'Sides': data.cellEdgeSides || ''
+    if (mappedData.stringLengthTS01A) {
+      setSubResults(17, { 
+        'TS01A': mappedData.stringLengthTS01A, 
+        'TS01B': mappedData.stringLengthTS01B,
+        'TS02A': mappedData.stringLengthTS02A,
+        'TS02B': mappedData.stringLengthTS02B,
+        'TS03A': mappedData.stringLengthTS03A,
+        'TS03B': mappedData.stringLengthTS03B,
+        'TS04A': mappedData.stringLengthTS04A,
+        'TS04B': mappedData.stringLengthTS04B
       });
-      setResult(21, `Top: ${data.cellEdgeTop || '-'}, Bottom: ${data.cellEdgeBottom || '-'}, Sides: ${data.cellEdgeSides || '-'}`);
     }
-    // Soldering Peel Strength (sr 23, index 22)
-    if (data.busbarPeelStrength) {
-      setSubResults(22, { 'Ribbon to busbar': data.busbarPeelStrength });
-      setResult(22, data.busbarPeelStrength);
+    if (mappedData.cellGapTS01A) {
+      setSubResults(18, { 
+        'TS01A': mappedData.cellGapTS01A, 
+        'TS01B': mappedData.cellGapTS01B,
+        'TS02A': mappedData.cellGapTS02A,
+        'TS02B': mappedData.cellGapTS02B,
+        'TS03A': mappedData.cellGapTS03A,
+        'TS03B': mappedData.cellGapTS03B,
+        'TS04A': mappedData.cellGapTS04A,
+        'TS04B': mappedData.cellGapTS04B
+      });
     }
-    setResult(23, data.terminalBusbar);
-    if (data.solderingQuality1) {
-      setResult(24, `${data.solderingQuality1}, ${data.solderingQuality2 || ''}, ${data.solderingQuality3 || ''}`);
+    if (mappedData.tabberPeelStrength) setSubResults(19, { 'Peel Strength': mappedData.tabberPeelStrength });
+
+    // ========== STAGE 7: Auto Bussing (sr 21-28, index 20-27) ==========
+    setResult(20, mappedData.stringToStringGap);
+    if (mappedData.cellEdgeTop || mappedData.cellEdgeBottom) {
+      setSubResults(21, { 
+        'TOP': mappedData.cellEdgeTop, 
+        'Bottom': mappedData.cellEdgeBottom, 
+        'Sides': mappedData.cellEdgeSides,
+        'Left': mappedData.cellEdgeLeft,
+        'Right': mappedData.cellEdgeRight
+      });
     }
-    if (data.creepageTop) {
-      setResult(25, `Top: ${data.creepageTop}, ${data.creepageTop2 || ''}, ${data.creepageTop3 || ''} | Bottom: ${data.creepageBottom || ''}, ${data.creepageBottom2 || ''}, ${data.creepageBottom3 || ''}`);
+    if (mappedData.busbarPeelStrength) setSubResults(22, { 'Ribbon to busbar': mappedData.busbarPeelStrength });
+    // Soldering quality - 3 separate values
+    if (mappedData.solderingQuality1 || mappedData.solderingQuality2 || mappedData.solderingQuality3) {
+      setSubResults(23, { 
+        'Quality1': mappedData.solderingQuality1, 
+        'Quality2': mappedData.solderingQuality2, 
+        'Quality3': mappedData.solderingQuality3 
+      });
+    } else if (mappedData.solderingQuality) {
+      setResult(23, mappedData.solderingQuality);
     }
-    setResult(26, data.processVerificationAuto);
-    if (data.autoTaping1) {
-      setResult(27, `${data.autoTaping1}, ${data.autoTaping2 || ''}, ${data.autoTaping3 || ''}`);
+    // Creepage distances - 6 values (3 top, 3 bottom)
+    if (mappedData.creepageTop || mappedData.creepageBottom) {
+      setSubResults(24, { 
+        'Top1': mappedData.creepageTop,
+        'Top2': mappedData.creepageTop2,
+        'Top3': mappedData.creepageTop3,
+        'Bot1': mappedData.creepageBottom,
+        'Bot2': mappedData.creepageBottom2,
+        'Bot3': mappedData.creepageBottom3
+      });
+    } else if (mappedData.creepageDistances) {
+      setResult(24, mappedData.creepageDistances);
+    }
+    if (mappedData.terminalBusbar) setSubResults(25, { 'Terminal Busbar': mappedData.terminalBusbar });
+    // Auto taping - 3 values
+    if (mappedData.autoTaping1 || mappedData.autoTaping2 || mappedData.autoTaping3) {
+      setSubResults(26, { 
+        'Taping1': mappedData.autoTaping1, 
+        'Taping2': mappedData.autoTaping2, 
+        'Taping3': mappedData.autoTaping3 
+      });
+    }
+    // Process verification for Auto Bussing (sr 28, index 27)
+    if (mappedData.processVerificationAuto) setResult(27, mappedData.processVerificationAuto);
+
+    // ========== STAGE 9: EVA Cutting 2 (sr 30-32, index 29-31) ==========
+    setResult(29, mappedData.eva2Type);
+    setResult(30, mappedData.eva2Dimension);
+    setResult(31, mappedData.eva2Status);
+
+    // ========== STAGE 10: Back Glass (sr 33-34, index 32-33) ==========
+    setResult(32, mappedData.backGlassDimension);
+    if (mappedData.numberOfHoles) {
+      const holeDims = [mappedData.holesDimension1, mappedData.holesDimension2, mappedData.holesDimension3].filter(Boolean).join(', ');
+      setResult(33, `${mappedData.numberOfHoles}; ${holeDims}`);
     }
 
-    // ======== STAGE 8: Auto RFID (sr 29, index 28) ========
-    if (data.positionVerification1) {
-      setResult(28, `${data.positionVerification1}, ${data.positionVerification2 || ''}, ${data.positionVerification3 || ''}`);
+    // ========== STAGE 8: Auto RFID Position (sr 29, index 28) ==========
+    if (mappedData.positionVerification1 || mappedData.positionVerification2 || mappedData.positionVerification3) {
+      setSubResults(28, {
+        'Position1': mappedData.positionVerification1,
+        'Position2': mappedData.positionVerification2,
+        'Position3': mappedData.positionVerification3
+      });
     }
 
-    // ======== STAGE 9: EVA Cutting 2 (sr 30-32, index 29-31) ========
-    setResult(29, data.eva2Type);
-    setResult(30, data.eva2Dimension);
-    setResult(31, data.eva2Status);
-
-    // ======== STAGE 10: Back Glass (sr 33-34, index 32-33) ========
-    setResult(32, data.backGlassDimension);
-    if (data.numberOfHoles) {
-      setResult(33, `${data.numberOfHoles}; ${data.holesDimension1 || ''}, ${data.holesDimension2 || ''}, ${data.holesDimension3 || ''}`);
+    // ========== STAGE 11: Auto Busbar Flatten (sr 35, index 34) ==========
+    if (mappedData.visualInspection1 || mappedData.visualInspection2) {
+      setSubResults(34, {
+        'V1': mappedData.visualInspection1,
+        'V2': mappedData.visualInspection2,
+        'V3': mappedData.visualInspection3,
+        'V4': mappedData.visualInspection4,
+        'V5': mappedData.visualInspection5
+      });
     }
 
-    // ======== STAGE 11: Auto Busbar Flatten (sr 35, index 34) ========
-    if (data.visualInspection1) {
-      setResult(34, `${data.visualInspection1}, ${data.visualInspection2 || ''}, ${data.visualInspection3 || ''}, ${data.visualInspection4 || ''}, ${data.visualInspection5 || ''}`);
-    }
-
-    // ======== STAGE 12: Pre-Lam EL (sr 36, index 35) ========
-    if (data.elInspectionBarcodes && data.elInspectionBarcodes.length > 0) {
+    // ========== STAGE 12: Pre-Lamination EL (sr 36-37, index 35-36) ==========
+    if (mappedData.elBarcode1 || mappedData.elResult1) {
       setSubResults(35, {
-        'S1': data.elInspectionBarcodes[0] ? `${data.elInspectionBarcodes[0].barcode} - ${data.elInspectionBarcodes[0].result || ''}` : '',
-        'S2': data.elInspectionBarcodes[1] ? `${data.elInspectionBarcodes[1].barcode} - ${data.elInspectionBarcodes[1].result || ''}` : '',
-        'S3': data.elInspectionBarcodes[2] ? `${data.elInspectionBarcodes[2].barcode} - ${data.elInspectionBarcodes[2].result || ''}` : ''
+        'Barcode1': mappedData.elBarcode1,
+        'Result1': mappedData.elResult1,
+        'Barcode2': mappedData.elBarcode2,
+        'Result2': mappedData.elResult2,
+        'Barcode3': mappedData.elBarcode3,
+        'Result3': mappedData.elResult3
       });
-      setResult(35, data.elInspectionBarcodes.map(b => b.barcode).join(', '));
+      setSubResults(36, {
+        'Barcode4': mappedData.elBarcode4,
+        'Result4': mappedData.elResult4,
+        'Barcode5': mappedData.elBarcode5,
+        'Result5': mappedData.elResult5
+      });
     }
 
-    // ======== STAGE 13: String Rework (sr 37-38, index 36-37) ========
-    setResult(36, data.cleaningStatus);
-    if (data.solderingIronTemp) {
-      setResult(37, data.solderingIronTemp);
-      if (!newCheckpoints[37].subResults) newCheckpoints[37].subResults = {};
-      newCheckpoints[37].subResults['Time'] = data.solderingIronTime || '';
+    // ========== STAGE 13: String Rework Station (sr 38-39, index 37-38) ==========
+    if (mappedData.cleaningStatus) setResult(37, mappedData.cleaningStatus);
+    if (mappedData.solderingIronTime || mappedData.solderingIronTemp) {
+      setSubResults(38, {
+        'Time': mappedData.solderingIronTime,
+        'Temp': mappedData.solderingIronTemp
+      });
     }
 
-    // ======== STAGE 14: Module Rework (sr 39-41, index 38-40) ========
-    setResult(38, data.methodOfRework);
-    setResult(39, data.reworkCleaningStatus);
-    if (data.reworkSolderingTemp) {
-      setResult(40, data.reworkSolderingTemp);
-      if (!newCheckpoints[40].subResults) newCheckpoints[40].subResults = {};
-      newCheckpoints[40].subResults['Time'] = data.reworkSolderingTime || '';
+    // ========== STAGE 14: Module Rework Station (sr 40-41, index 39-40) ==========
+    if (mappedData.methodOfRework) setResult(39, mappedData.methodOfRework);
+    if (mappedData.reworkCleaningStatus) setSubResults(39, { 'Cleaning': mappedData.reworkCleaningStatus });
+    if (mappedData.reworkSolderingTime || mappedData.reworkSolderingTemp) {
+      setSubResults(40, {
+        'Time': mappedData.reworkSolderingTime,
+        'Temp': mappedData.reworkSolderingTemp
+      });
     }
 
-    // ======== STAGE 15: Laminator (sr 42-45, index 41-44) ========
-    setResult(41, data.laminatorMonitoring);
-    setResult(42, data.diaphragmCleaning);
-    // Point 44 - Peel of Test (has Ref subResult)
-    if (data.peelTestRef) {
-      setSubResults(43, { 'Ref': data.peelTestRef });
+    // ========== STAGE 15: Laminator (sr 42-45, index 41-44) ==========
+    setResult(41, mappedData.laminatorMonitoring);
+    setResult(42, mappedData.diaphragmCleaning);
+    if (mappedData.peelTestRef || mappedData.peelStrength || mappedData.peelStrengthValue) {
+      setSubResults(43, { 'Ref': mappedData.peelTestRef, 'Value': mappedData.peelStrength || mappedData.peelStrengthValue });
     }
-    // Point 45 - Gel Content Test (has Ref subResult)
-    if (data.gelContentRef) {
-      setSubResults(44, { 'Ref': data.gelContentRef });
+    if (mappedData.gelContentRef || mappedData.gelContent || mappedData.gelContentValue) {
+      setSubResults(44, { 'Ref': mappedData.gelContentRef, 'Value': mappedData.gelContent || mappedData.gelContentValue });
     }
 
-    // ======== STAGE 16: Auto Tape Removing (sr 46, index 45) ========
-    if (data.visualCheck1) {
-      setResult(45, `${data.visualCheck1}, ${data.visualCheck2 || ''}, ${data.visualCheck3 || ''}, ${data.visualCheck4 || ''}, ${data.visualCheck5 || ''}`);
+    // ========== STAGE 16: Auto Tape Removing (sr 46, index 45) ==========
+    if (mappedData.tapeVisualCheck1 || mappedData.tapeVisualCheck2) {
+      setSubResults(45, {
+        'V1': mappedData.tapeVisualCheck1,
+        'V2': mappedData.tapeVisualCheck2,
+        'V3': mappedData.tapeVisualCheck3,
+        'V4': mappedData.tapeVisualCheck4,
+        'V5': mappedData.tapeVisualCheck5
+      });
     }
 
-    // ======== STAGE 17: Auto Edge Trimming (sr 47-48, index 46-47) ========
-    if (data.trimmingSNo1) {
+    // ========== STAGE 17: Auto Edge Trimming (sr 47, index 46) ==========
+    if (mappedData.trimmingSNo1 || mappedData.bladeLifeCycle || mappedData.bladeCondition) {
       setSubResults(46, {
-        'S1': data.trimmingSNo1, 'S2': data.trimmingSNo2 || '', 'S3': data.trimmingSNo3 || '',
-        'S4': data.trimmingSNo4 || '', 'S5': data.trimmingSNo5 || ''
+        'S1': mappedData.trimmingSNo1,
+        'S2': mappedData.trimmingSNo2,
+        'S3': mappedData.trimmingSNo3,
+        'S4': mappedData.trimmingSNo4,
+        'S5': mappedData.trimmingSNo5,
+        'Blade Life': mappedData.bladeLifeCycle,
+        'Blade Condition': mappedData.bladeCondition
       });
     }
-    setResult(47, data.bladeLifeCycle);
 
-    // ======== STAGE 18: 90° Visual (sr 49, index 48) ========
-    if (data.visualSNo1) {
+    // ========== STAGE 18: 90° Visual Inspection (sr 48-49, index 47-48) ==========
+    // Sr 48 (index 47): Blade condition / trimming results
+    if (mappedData.bladeCondition) setResult(47, mappedData.bladeCondition);
+    // Sr 49 (index 48): Visual Inspection S1-S5 with results - ALL on index 48
+    if (mappedData.visualSNo1 || mappedData.visualResult1) {
       setSubResults(48, {
-        'S1': `${data.visualSNo1} - ${data.visualResult1 || ''}`,
-        'S2': `${data.visualSNo2 || ''} - ${data.visualResult2 || ''}`,
-        'S3': `${data.visualSNo3 || ''} - ${data.visualResult3 || ''}`,
-        'S4': `${data.visualSNo4 || ''} - ${data.visualResult4 || ''}`,
-        'S5': `${data.visualSNo5 || ''} - ${data.visualResult5 || ''}`
+        'S1': mappedData.visualSNo1,
+        'S2': mappedData.visualSNo2,
+        'S3': mappedData.visualSNo3,
+        'S4': mappedData.visualSNo4,
+        'S5': mappedData.visualSNo5,
+        'R1': mappedData.visualResult1 || 'OK',
+        'R2': mappedData.visualResult2 || 'OK',
+        'R3': mappedData.visualResult3 || 'OK',
+        'R4': mappedData.visualResult4 || 'OK',
+        'R5': mappedData.visualResult5 || 'OK'
       });
     }
 
-    // ======== STAGE 19: Framing (sr 50-53, index 49-52) ========
-    setResult(49, data.glueUniformity);
-    if (data.shortSideGlueRef) {
-      setSubResults(50, { 'Ref': data.shortSideGlueRef });
+    // ========== STAGE 19: Framing (sr 50-53, index 49-52) ==========
+    if (mappedData.glueUniformity) setResult(49, mappedData.glueUniformity);
+    if (mappedData.shortSideGlueRef) {
+      setResult(50, mappedData.shortSideGlueRef);
+      setSubResults(50, { 'Ref': mappedData.shortSideGlueRef });
     }
-    if (data.longSideGlueRef) {
-      setResult(51, data.longSideGlueRef);
+    if (mappedData.longSideGlueRef) {
+      setResult(51, mappedData.longSideGlueRef);
+      setSubResults(51, { 'Ref': mappedData.longSideGlueRef });
     }
-    setResult(52, data.anodizingThickness);
+    if (mappedData.anodizingThickness) setResult(52, mappedData.anodizingThickness);
 
-    // ======== STAGE 20: Junction Box (sr 54-55, index 53-54) ========
-    if (data.jbAppearance || data.jbCableLength) {
-      setResult(53, `${data.jbAppearance || ''} / ${data.jbCableLength || ''}`);
-    }
-    setResult(54, data.siliconGlueWeight);
+    // ========== STAGE 20: Junction Box (sr 54-55, index 53-54) ==========
+    if (mappedData.jbAppearance) setResult(53, mappedData.jbAppearance);
+    if (mappedData.jbCableLength) setSubResults(53, { 'Cable Length': mappedData.jbCableLength });
+    setResult(54, mappedData.siliconGlueWeight);
+    if (mappedData.pottingStatus) setSubResults(54, { 'Potting': mappedData.pottingStatus });
+    if (mappedData.jbModel) setSubResults(53, { 'Model': mappedData.jbModel });
 
-    // ======== STAGE 21: Auto JB Soldering (sr 56-58, index 55-57) ========
-    setResult(55, data.maxWeldingTime);
-    setResult(56, data.solderingCurrent);
-    setResult(57, data.solderingQuality);
-
-    // ======== STAGE 22: JB Potting (sr 59-61, index 58-60) ========
-    if (data.glueRatioRef) {
-      setSubResults(58, { 'Ref': data.glueRatioRef });
-    }
-    setResult(59, data.pottingWeight);
-    if (data.nozzleChangeTime1) {
-      setSubResults(60, { 'Time': `${data.nozzleChangeTime1} - ${data.nozzleChangeTime2 || ''}` });
+    // ========== STAGE 21: Auto JB Soldering (sr 56-58, index 55-57) ==========
+    setResult(55, mappedData.maxWeldingTime);
+    setResult(56, mappedData.solderingCurrent);
+    if (mappedData.solderingTemp) setSubResults(56, { 'Temp': mappedData.solderingTemp });
+    if (mappedData.solderQuality || mappedData.solderingQuality || mappedData.jbSolderingQuality) {
+      setResult(57, mappedData.solderQuality || mappedData.solderingQuality || mappedData.jbSolderingQuality);
     }
 
-    // ======== STAGE 23: OLE Potting (sr 62, index 61) ========
-    if (data.oleVisualCheck1) {
-      setResult(61, `${data.oleVisualCheck1}, ${data.oleVisualCheck2 || ''}, ${data.oleVisualCheck3 || ''}, ${data.oleVisualCheck4 || ''}, ${data.oleVisualCheck5 || ''}`);
+    // ========== STAGE 22: JB Potting (sr 59-61, index 58-60) ==========
+    if (mappedData.glueRatioRef) setSubResults(58, { 'Ref': mappedData.glueRatioRef });
+    if (mappedData.pottingWeight) setResult(59, mappedData.pottingWeight);
+    if (mappedData.pottingStatus) setSubResults(59, { 'Status': mappedData.pottingStatus });
+    if (mappedData.nozzleChangeTime1 || mappedData.nozzleChangeTime2) {
+      setSubResults(60, { 
+        'Time1': mappedData.nozzleChangeTime1, 
+        'Time2': mappedData.nozzleChangeTime2 
+      });
     }
 
-    // ======== STAGE 24: Curing (sr 63-65, index 62-64) ========
-    setResult(62, data.curingTemperature);
-    setResult(63, data.curingHumidity);
-    setResult(64, data.curingTime);
-
-    // ======== STAGE 25: Buffing (sr 66, index 65) ========
-    if (data.buffingCheck1) {
-      setResult(65, `${data.buffingCheck1}, ${data.buffingCheck2 || ''}, ${data.buffingCheck3 || ''}, ${data.buffingCheck4 || ''}, ${data.buffingCheck5 || ''}`);
+    // ========== STAGE 23: OLE Potting Inspection (sr 62, index 61) ==========
+    if (mappedData.oleVisualCheck1 || mappedData.oleVisualCheck2) {
+      setSubResults(61, {
+        'V1': mappedData.oleVisualCheck1,
+        'V2': mappedData.oleVisualCheck2,
+        'V3': mappedData.oleVisualCheck3,
+        'V4': mappedData.oleVisualCheck4,
+        'V5': mappedData.oleVisualCheck5
+      });
     }
 
-    // ======== STAGE 26: Cleaning (sr 67, index 66) ========
-    if (data.cleaningSNo1) {
+    // ========== STAGE 24: Curing (sr 63-65, index 62-64) ==========
+    setResult(62, mappedData.curingTemperature);
+    setResult(63, mappedData.curingHumidity);
+    setResult(64, mappedData.curingTime);
+
+    // ========== STAGE 25: Buffing (sr 66, index 65) ==========
+    if (mappedData.buffingCheck1 || mappedData.buffingCheck2) {
+      setSubResults(65, {
+        'V1': mappedData.buffingCheck1,
+        'V2': mappedData.buffingCheck2,
+        'V3': mappedData.buffingCheck3,
+        'V4': mappedData.buffingCheck4,
+        'V5': mappedData.buffingCheck5
+      });
+    }
+
+    // ========== STAGE 26: Cleaning (sr 67, index 66) ==========
+    if (mappedData.cleaningSNo1 || mappedData.cleaningResult1) {
       setSubResults(66, {
-        'S1': `${data.cleaningSNo1} - ${data.cleaningResult1 || ''}`,
-        'S2': `${data.cleaningSNo2 || ''} - ${data.cleaningResult2 || ''}`,
-        'S3': `${data.cleaningSNo3 || ''} - ${data.cleaningResult3 || ''}`,
-        'S4': `${data.cleaningSNo4 || ''} - ${data.cleaningResult4 || ''}`,
-        'S5': `${data.cleaningSNo5 || ''} - ${data.cleaningResult5 || ''}`
+        'S1': mappedData.cleaningSNo1,
+        'S2': mappedData.cleaningSNo2,
+        'S3': mappedData.cleaningSNo3,
+        'S4': mappedData.cleaningSNo4,
+        'S5': mappedData.cleaningSNo5,
+        'R1': mappedData.cleaningResult1,
+        'R2': mappedData.cleaningResult2,
+        'R3': mappedData.cleaningResult3,
+        'R4': mappedData.cleaningResult4,
+        'R5': mappedData.cleaningResult5
       });
     }
 
-    // ======== STAGE 27: Flash Tester (sr 68-72, index 67-71) ========
-    setResult(67, data.ambientTemp);
-    setResult(68, data.moduleTemp);
-    setResult(69, data.sunsimulatorCalibration);
-    setResult(70, data.validation);
-    setResult(71, data.silverRefEL);
+    // ========== STAGE 27: Flash Tester (sr 68-72, index 67-71) ==========
+    setResult(67, mappedData.ambientTemp);
+    setResult(68, mappedData.moduleTemp);
+    setResult(69, mappedData.sunsimulatorCalibration);
+    setResult(70, mappedData.validation);
+    if (mappedData.silverRefEL) setSubResults(70, { 'Silver Ref EL': mappedData.silverRefEL });
+    // Flash test electrical parameters
+    if (mappedData.pmax || mappedData.voc || mappedData.isc) {
+      setSubResults(71, { 
+        'Pmax': mappedData.pmax, 
+        'Voc': mappedData.voc, 
+        'Isc': mappedData.isc,
+        'Vmp': mappedData.vmp,
+        'Imp': mappedData.imp,
+        'FF': mappedData.ff,
+        'Irradiance': mappedData.irradiance
+      });
+    }
 
-    // ======== STAGE 28: Hipot Test (sr 73, index 72) ========
-    if (data.hipotSNo1 || data.dcw1) {
+    // ========== STAGE 28: Hipot Test (sr 73, index 72) ==========
+    if (mappedData.hipotSNo1 || mappedData.dcw1 || mappedData.ir1) {
       setSubResults(72, {
-        'Sample 1': data.hipotSNo1 ? `${data.hipotSNo1}: DCW=${data.dcw1 || '-'}, IR=${data.ir1 || '-'}, GC=${data.gc1 || '-'}` : '',
-        'Sample 2': data.hipotSNo2 ? `${data.hipotSNo2}: DCW=${data.dcw2 || '-'}, IR=${data.ir2 || '-'}, GC=${data.gc2 || '-'}` : '',
-        'Sample 3': data.hipotSNo3 ? `${data.hipotSNo3}: DCW=${data.dcw3 || '-'}, IR=${data.ir3 || '-'}, GC=${data.gc3 || '-'}` : '',
-        'Sample 4': data.hipotSNo4 ? `${data.hipotSNo4}: DCW=${data.dcw4 || '-'}, IR=${data.ir4 || '-'}, GC=${data.gc4 || '-'}` : '',
-        'Sample 5': data.hipotSNo5 ? `${data.hipotSNo5}: DCW=${data.dcw5 || '-'}, IR=${data.ir5 || '-'}, GC=${data.gc5 || '-'}` : ''
+        'Sample 1': mappedData.hipotSNo1 ? `${mappedData.hipotSNo1}: DCW=${mappedData.dcw1 || '-'}, IR=${mappedData.ir1 || '-'}, GC=${mappedData.gc1 || '-'}` : (mappedData.dcw1 ? `DCW=${mappedData.dcw1}, IR=${mappedData.ir1 || '-'}, GC=${mappedData.gc1 || '-'}` : ''),
+        'Sample 2': mappedData.hipotSNo2 ? `${mappedData.hipotSNo2}: DCW=${mappedData.dcw2 || '-'}, IR=${mappedData.ir2 || '-'}, GC=${mappedData.gc2 || '-'}` : (mappedData.dcw2 ? `DCW=${mappedData.dcw2}, IR=${mappedData.ir2 || '-'}, GC=${mappedData.gc2 || '-'}` : ''),
+        'Sample 3': mappedData.hipotSNo3 ? `${mappedData.hipotSNo3}: DCW=${mappedData.dcw3 || '-'}, IR=${mappedData.ir3 || '-'}, GC=${mappedData.gc3 || '-'}` : (mappedData.dcw3 ? `DCW=${mappedData.dcw3}, IR=${mappedData.ir3 || '-'}, GC=${mappedData.gc3 || '-'}` : ''),
+        'Sample 4': mappedData.hipotSNo4 ? `${mappedData.hipotSNo4}: DCW=${mappedData.dcw4 || '-'}, IR=${mappedData.ir4 || '-'}, GC=${mappedData.gc4 || '-'}` : (mappedData.dcw4 ? `DCW=${mappedData.dcw4}, IR=${mappedData.ir4 || '-'}, GC=${mappedData.gc4 || '-'}` : ''),
+        'Sample 5': mappedData.hipotSNo5 ? `${mappedData.hipotSNo5}: DCW=${mappedData.dcw5 || '-'}, IR=${mappedData.ir5 || '-'}, GC=${mappedData.gc5 || '-'}` : (mappedData.dcw5 ? `DCW=${mappedData.dcw5}, IR=${mappedData.ir5 || '-'}, GC=${mappedData.gc5 || '-'}` : '')
       });
     }
 
-    // ======== STAGE 29: Post EL (sr 74-75, index 73-74) ========
-    if (data.voltage || data.current) {
-      setResult(73, `${data.voltage || ''} ${data.current || ''}`);
-    }
-    if (data.elSNo1) {
+    // ========== STAGE 29: Post EL Test (sr 74-75, index 73-74) ==========
+    if (mappedData.voltage || mappedData.postElVoltage) setResult(73, mappedData.voltage || mappedData.postElVoltage);
+    if (mappedData.current || mappedData.postElCurrent) setSubResults(73, { 'Current': mappedData.current || mappedData.postElCurrent });
+    if (mappedData.postElSNo1 || mappedData.postElResult1) {
       setSubResults(74, {
-        'S1': `${data.elSNo1} - ${data.elResult1 || ''}`,
-        'S2': `${data.elSNo2 || ''} - ${data.elResult2 || ''}`,
-        'S3': `${data.elSNo3 || ''} - ${data.elResult3 || ''}`,
-        'S4': `${data.elSNo4 || ''} - ${data.elResult4 || ''}`,
-        'S5': `${data.elSNo5 || ''} - ${data.elResult5 || ''}`
+        'S1': mappedData.postElSNo1,
+        'S2': mappedData.postElSNo2,
+        'S3': mappedData.postElSNo3,
+        'S4': mappedData.postElSNo4,
+        'S5': mappedData.postElSNo5,
+        'R1': mappedData.postElResult1,
+        'R2': mappedData.postElResult2,
+        'R3': mappedData.postElResult3,
+        'R4': mappedData.postElResult4,
+        'R5': mappedData.postElResult5
       });
     }
 
-    // ======== STAGE 30: RFID (sr 76-77, index 75-76) ========
-    setResult(75, data.rfidPosition);
-    if (data.cellMakeMonth || data.moduleMakeMonth) {
-      setResult(76, `Cell: ${data.cellMakeMonth || ''}, Module: ${data.moduleMakeMonth || ''}`);
+    // ========== STAGE 30: RFID (sr 76-77, index 75-76) ==========
+    if (mappedData.rfidPosition) setResult(75, mappedData.rfidPosition);
+    if (mappedData.cellMakeMonth || mappedData.moduleMakeMonth) {
+      setSubResults(76, { 
+        'Cell Make': mappedData.cellMakeMonth, 
+        'Module Make': mappedData.moduleMakeMonth 
+      });
     }
 
-    // ======== STAGE 31: Final Visual (sr 78-79, index 77-78) ========
-    if (data.visualInspectionBarcodes && data.visualInspectionBarcodes.length > 0) {
+    // ========== STAGE 31: Final Visual Inspection (sr 78-79, index 77-78) ==========
+    if (mappedData.finalVisualSNo1 || mappedData.finalVisualResult1) {
       setSubResults(77, {
-        'S1': `${data.visualInspectionBarcodes[0]?.barcode || ''} - ${data.visualInspectionBarcodes[0]?.result || ''}`,
-        'S2': `${data.visualInspectionBarcodes[1]?.barcode || ''} - ${data.visualInspectionBarcodes[1]?.result || ''}`,
-        'S3': `${data.visualInspectionBarcodes[2]?.barcode || ''} - ${data.visualInspectionBarcodes[2]?.result || ''}`,
-        'S4': `${data.visualInspectionBarcodes[3]?.barcode || ''} - ${data.visualInspectionBarcodes[3]?.result || ''}`,
-        'S5': `${data.visualInspectionBarcodes[4]?.barcode || ''} - ${data.visualInspectionBarcodes[4]?.result || ''}`
+        'S1': mappedData.finalVisualSNo1,
+        'S2': mappedData.finalVisualSNo2,
+        'S3': mappedData.finalVisualSNo3,
+        'S4': mappedData.finalVisualSNo4,
+        'S5': mappedData.finalVisualSNo5,
+        'R1': mappedData.finalVisualResult1,
+        'R2': mappedData.finalVisualResult2,
+        'R3': mappedData.finalVisualResult3,
+        'R4': mappedData.finalVisualResult4,
+        'R5': mappedData.finalVisualResult5
       });
     }
-    if (data.backlabelBarcodes && data.backlabelBarcodes.length > 0) {
+    // Backlabel
+    if (mappedData.backlabelSNo1 || mappedData.backlabelResult1) {
       setSubResults(78, {
-        'S1': `${data.backlabelBarcodes[0]?.barcode || ''} - ${data.backlabelBarcodes[0]?.result || ''}`,
-        'S2': `${data.backlabelBarcodes[1]?.barcode || ''} - ${data.backlabelBarcodes[1]?.result || ''}`,
-        'S3': `${data.backlabelBarcodes[2]?.barcode || ''} - ${data.backlabelBarcodes[2]?.result || ''}`,
-        'S4': `${data.backlabelBarcodes[3]?.barcode || ''} - ${data.backlabelBarcodes[3]?.result || ''}`,
-        'S5': `${data.backlabelBarcodes[4]?.barcode || ''} - ${data.backlabelBarcodes[4]?.result || ''}`
+        'S1': mappedData.backlabelSNo1,
+        'S2': mappedData.backlabelSNo2,
+        'S3': mappedData.backlabelSNo3,
+        'S4': mappedData.backlabelSNo4,
+        'S5': mappedData.backlabelSNo5,
+        'R1': mappedData.backlabelResult1,
+        'R2': mappedData.backlabelResult2,
+        'R3': mappedData.backlabelResult3,
+        'R4': mappedData.backlabelResult4,
+        'R5': mappedData.backlabelResult5
       });
     }
 
-    // ======== STAGE 32: Dimension (sr 80-84, index 79-83) ========
-    setResult(79, data.moduleProfile);
-    if (data.mountingHoleXPitch) {
-      setResult(80, `X: ${data.mountingHoleXPitch}, Y: ${data.mountingHoleYPitch || ''}`);
+    // ========== STAGE 32: Dimension (sr 80-84, index 79-83) ==========
+    setResult(79, mappedData.moduleProfile || mappedData.moduleDimensionLW);
+    if (mappedData.mountingHoleXPitch) {
+      setResult(80, `X: ${mappedData.mountingHoleXPitch}, Y: ${mappedData.mountingHoleYPitch || ''}`);
+    } else if (mappedData.mountingHole) {
+      setResult(80, mappedData.mountingHole);
     }
-    setResult(81, data.diagonalDifference);
-    setResult(82, data.cornerGap);
-    setResult(83, data.jbCableLength);
+    setResult(81, mappedData.diagonalDifference || mappedData.diagonalDiff);
+    setResult(82, mappedData.cornerGap);
+    if (mappedData.moduleLength || mappedData.moduleWidth) {
+      setSubResults(79, { 'L': mappedData.moduleLength, 'W': mappedData.moduleWidth, 'T': mappedData.moduleThickness });
+    }
+    if (mappedData.jbCableLength && !mappedData.jbCableLength.includes('mm')) {
+      // Avoid duplicating JB cable length if already set in JB section
+      setSubResults(83, { 'JB Cable': mappedData.jbCableLength });
+    }
 
-    // ======== STAGE 33: Packaging (sr 85-88, index 84-87) ========
-    setResult(84, data.packagingLabel);
-    setResult(85, data.contentInBox);
-    setResult(86, data.boxCondition);
-    setResult(87, data.palletDimension);
+    // ========== STAGE 33: Packaging (sr 85-88, index 84-87) ==========
+    setResult(84, mappedData.packagingLabel);
+    setResult(85, mappedData.contentInBox);
+    setResult(86, mappedData.boxCondition);
+    setResult(87, mappedData.palletDimension);
+    if (mappedData.cartonNo) setSubResults(84, { 'Carton No': mappedData.cartonNo });
+    if (mappedData.shippingMarks) setSubResults(85, { 'Shipping Marks': mappedData.shippingMarks });
 
     // Update form state
     newFormData.checkpoints = newCheckpoints;
     setFormData(newFormData);
-    
-    console.log('=== IPQC Parser Complete (NO DEFAULT VALUES) ===');
-    console.log('📊 Total fields parsed:', Object.keys(data).length);
-    console.log('📊 All parsed data:', JSON.stringify(data, null, 2));
-    console.log('🚫 No auto-filled defaults - only real OCR data used');
-    
-    // Debug: Log all parser output field names
-    console.log('📋 Parser Field Names:', Object.keys(data).sort().join(', '));
+
+    // Count filled fields
+    let filledCount = 0;
+    newCheckpoints.forEach((cp, idx) => {
+      if (cp.subResults && (cp.subResults['result'] || Object.keys(cp.subResults).length > 0)) {
+        filledCount++;
+      }
+    });
+    console.log('📊 Form fields filled:', filledCount, '/ 88');
+    console.log('=== AI Batch Mapping Applied ===');
+  };
+
+  const parseAndUpdateForm = async (text) => {
+    console.log('=== Starting Enhanced AI IPQC Parser ===');
+    console.log('🤖 Using AI-powered mapping for better accuracy');
+
+    const newFormData = { ...formData };
+    const newCheckpoints = [...newFormData.checkpoints];
+
+    try {
+      // Use Enhanced AI Mapping for intelligent field extraction
+      console.log('🤖 AI Mapping: Processing OCR text...');
+      const aiMappingResult = await mapIPQCWithAI(text, newCheckpoints);
+      console.log('✅ AI Mapping Results:', aiMappingResult);
+      
+      // Apply AI mapping results
+      if (aiMappingResult.header && Object.keys(aiMappingResult.header).length > 0) {
+        Object.assign(newFormData, aiMappingResult.header);
+        console.log('📋 Header updated:', aiMappingResult.header);
+      }
+      
+      if (aiMappingResult.checkpointUpdates && aiMappingResult.checkpointUpdates.length > 0) {
+        aiMappingResult.checkpointUpdates.forEach(update => {
+          if (update.index >= 0 && update.index < newCheckpoints.length) {
+            if (!newCheckpoints[update.index].subResults) {
+              newCheckpoints[update.index].subResults = {};
+            }
+            newCheckpoints[update.index].subResults[update.field] = update.value;
+            console.log(`✅ AI Mapped: Checkpoint ${update.index + 1}.${update.field} = ${update.value}`);
+          }
+        });
+      }
+      
+      // Fallback to rule-based parser if AI mapping returns limited results
+      if (!aiMappingResult.checkpointUpdates || aiMappingResult.checkpointUpdates.length < 3) {
+        console.log('⚠️ AI mapping found limited results, using fallback parser...');
+        const data = parseIPQCAllStages(text);
+        console.log('✅ Fallback Parsed Data:', data);
+
+        // Helper function to set result ONLY if value exists (fallback mode)
+        const setResult = (index, value) => {
+          if (!newCheckpoints[index] || !value || !value.toString().trim()) return;
+          if (!newCheckpoints[index].subResults) {
+            newCheckpoints[index].subResults = {};
+          }
+          newCheckpoints[index].subResults['result'] = value;
+          console.log(`✅ Fallback Checkpoint ${index + 1}: ${value}`);
+        };
+
+        // Apply critical fallback mappings
+        if (data.temperature) setResult(0, data.temperature);
+        if (data.temperatureTime && newCheckpoints[0]) {
+          if (!newCheckpoints[0].subResults) newCheckpoints[0].subResults = {};
+          newCheckpoints[0].subResults['Time'] = data.temperatureTime;
+        }
+        if (data.appearance) setResult(1, data.appearance);
+        if (data.solderingTemperature) setResult(4, data.solderingTemperature);
+        if (data.cellLoading) setResult(15, data.cellLoading);
+        if (data.visualInspection) setResult(44, data.visualInspection);
+        
+        console.log('🔄 Combined AI + Fallback parsing complete');
+      }
+
+    } catch (error) {
+      console.error('❌ Enhanced parsing error:', error);
+      console.log('🔄 Falling back to original parser...');
+      
+      // Emergency fallback to original parsing
+      const data = parseIPQCAllStages(text);
+      console.log('✅ Emergency Fallback Data:', data);
+      
+      // Apply basic fallback mappings
+      if (data.temperature && newCheckpoints[0]) {
+        if (!newCheckpoints[0].subResults) newCheckpoints[0].subResults = {};
+        newCheckpoints[0].subResults['result'] = data.temperature;
+      }
+    }
+
+    // Update form state
+    newFormData.checkpoints = newCheckpoints;
+    setFormData(newFormData);
+
+    console.log('=== Enhanced AI IPQC Parser Complete ===');
+    console.log('🤖 AI-powered field mapping with intelligent fallback');
     
     // Debug: Show which fields are set
     let filledCount = 0;
     newCheckpoints.forEach((cp, idx) => {
       if (cp.subResults && (cp.subResults['result'] || Object.keys(cp.subResults).length > 0)) {
         filledCount++;
-        console.log(`✅ Checkpoint ${idx}: sr ${cp.sr} - ${cp.checkpoint} = `, cp.subResults);
+        console.log(`✅ Checkpoint ${idx + 1}: sr ${cp.sr} - ${cp.checkpoint} = `, cp.subResults);
       }
     });
     console.log('📊 Form fields filled:', filledCount, '/ 88');
   };
+
+  // ========== BATCH PROCESSOR MODE ==========
+  if (showBatchProcessor) {
+    return <BatchProcessor onBack={() => setShowBatchProcessor(false)} />;
+  }
 
   // ========== SPLIT VIEW MODE - Form + PDF Side by Side ==========
   if (formViewMode) {
@@ -2917,20 +3476,20 @@ const IPQCForm = () => {
               <div style={{ fontSize: '60px', marginBottom: '15px' }}>
                 {isGeneratingPDF ? '📄' : isExportingExcel ? '📊' : isLoadingFromAPI ? '📄' : '🔍'}
               </div>
-              <h2 style={{ 
-                color: 'white', 
+              <h2 style={{
+                color: 'white',
                 margin: '0 0 10px 0',
                 fontSize: '24px',
                 fontWeight: '700'
               }}>
                 {isGeneratingPDF ? 'Generating PDF...' : isExportingExcel ? 'Exporting Excel...' : isLoadingFromAPI ? 'Loading PDF...' : 'OCR Processing...'}
               </h2>
-              <p style={{ 
-                color: 'rgba(255,255,255,0.9)', 
+              <p style={{
+                color: 'rgba(255,255,255,0.9)',
                 margin: '0 0 15px 0',
                 fontSize: '16px'
               }}>
-                {ocrProgress.total > 0 
+                {ocrProgress.total > 0
                   ? `Page ${ocrProgress.current} of ${ocrProgress.total}`
                   : 'Please wait...'}
               </p>
@@ -2954,7 +3513,7 @@ const IPQCForm = () => {
                 </div>
               )}
               {/* Animated Dots */}
-              <div style={{ 
+              <div style={{
                 marginTop: '15px',
                 display: 'flex',
                 justifyContent: 'center',
@@ -2985,41 +3544,87 @@ const IPQCForm = () => {
           </div>
         )}
 
-        {/* Top Bar */}
+        {/* Top Bar - Excel Style */}
         <div style={{
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          padding: '10px 20px',
+          background: '#217346',
+          padding: '6px 15px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-          padding: '8px 20px',
+          borderBottom: '1px solid #1a5c38',
           minHeight: 'auto'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button
               onClick={() => setFormViewMode(false)}
               style={{
-                padding: '8px 16px',
-                background: 'rgba(255,255,255,0.2)',
+                padding: '5px 14px',
+                background: 'rgba(255,255,255,0.15)',
                 color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontWeight: '700',
+                border: '1px solid rgba(255,255,255,0.3)',
+                borderRadius: '2px',
+                fontWeight: '600',
                 cursor: 'pointer',
-                fontSize: '13px',
+                fontSize: '12px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px'
+                gap: '5px',
+                fontFamily: 'Calibri, Arial, sans-serif'
               }}
             >
               ← Back
             </button>
-            <span style={{ color: 'white', fontWeight: '700', fontSize: '14px' }}>
+            <span style={{ color: 'white', fontWeight: '600', fontSize: '13px', fontFamily: 'Calibri, Arial, sans-serif' }}>
               📋 {selectedChecklist ? `${formatDate(selectedChecklist.date)} | ${selectedChecklist.Shift} | ${selectedChecklist.Line}` : ''}
             </span>
           </div>
+
+          {/* Export Buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={exportHandwrittenExcel}
+              disabled={isExportingHandwrittenExcel}
+              style={{
+                padding: '5px 14px',
+                background: isExportingHandwrittenExcel ? '#999' : '#4472C4',
+                color: 'white',
+                border: '1px solid rgba(0,0,0,0.2)',
+                borderRadius: '2px',
+                fontWeight: '600',
+                cursor: isExportingHandwrittenExcel ? 'not-allowed' : 'pointer',
+                fontSize: '11px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                fontFamily: 'Calibri, Arial, sans-serif'
+              }}
+            >
+              {isExportingHandwrittenExcel ? '⏳ Exporting...' : '📥 Excel Export'}
+            </button>
+
+            <button
+              onClick={exportHandwrittenPDF}
+              disabled={isExportingHandwrittenPDF}
+              style={{
+                padding: '5px 14px',
+                background: isExportingHandwrittenPDF ? '#999' : '#C00000',
+                color: 'white',
+                border: '1px solid rgba(0,0,0,0.2)',
+                borderRadius: '2px',
+                fontWeight: '600',
+                cursor: isExportingHandwrittenPDF ? 'not-allowed' : 'pointer',
+                fontSize: '11px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                fontFamily: 'Calibri, Arial, sans-serif'
+              }}
+            >
+              {isExportingHandwrittenPDF ? '⏳ Exporting...' : '📄 PDF Export'}
+            </button>
+          </div>
         </div>
+
 
         {/* Split View Content */}
         <div style={{
@@ -3032,80 +3637,91 @@ const IPQCForm = () => {
             width: '50%',
             overflow: 'auto',
             background: '#fff',
-            borderRight: '3px solid #667eea'
+            borderRight: '2px solid #4472C4'
           }}>
-            <div ref={formContainerRef} style={{ padding: '15px' }}>
-              {/* Form Header */}
-              <div style={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: 'white',
-                padding: '15px',
-                borderRadius: '10px',
-                marginBottom: '15px',
-                textAlign: 'center'
-              }}>
-                <h2 style={{ margin: 0, fontSize: '18px' }}>Gautam Solar Private Limited</h2>
-                <p style={{ margin: '5px 0 0 0', fontSize: '12px' }}>IPQC Check Sheet - Document No. GSPL/IPQC/IPC/003</p>
-              </div>
-
-              {/* Form Info */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '10px',
-                marginBottom: '15px',
-                padding: '15px',
-                background: '#f8f9fa',
-                borderRadius: '8px'
-              }}>
-                <div>
-                  <label style={{ fontSize: '11px', color: '#666', display: 'block' }}>Date:</label>
-                  <input 
-                    type="date" 
-                    name="date" 
-                    value={formData.date} 
-                    onChange={handleInputChange}
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', ...getCurrentHandwritingStyle() }}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: '#666', display: 'block' }}>Time:</label>
-                  <input 
-                    type="time" 
-                    name="time" 
-                    value={formData.time} 
-                    onChange={handleInputChange}
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', ...getCurrentHandwritingStyle() }}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: '#666', display: 'block' }}>Shift:</label>
-                  <input 
-                    type="text" 
-                    name="shift" 
-                    value={formData.shift} 
-                    onChange={handleInputChange}
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', ...getCurrentHandwritingStyle() }}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: '#666', display: 'block' }}>P.O. No.:</label>
-                  <input 
-                    type="text" 
-                    name="poNo" 
-                    value={formData.poNo} 
-                    onChange={handleInputChange}
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', ...getCurrentHandwritingStyle() }}
-                  />
-                </div>
-              </div>
+            <div ref={formContainerRef} style={{ padding: '0', background: 'white', fontFamily: 'Calibri, Arial, sans-serif' }}>
+              {/* Excel-style Form Header */}
+              <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #000' }}>
+                <tbody>
+                  <tr>
+                    <td colSpan="4" style={{
+                      background: '#4472C4',
+                      color: 'white',
+                      padding: '8px 12px',
+                      textAlign: 'center',
+                      fontWeight: '700',
+                      fontSize: '16px',
+                      border: '1px solid #000',
+                      letterSpacing: '0.5px'
+                    }}>
+                      Gautam Solar Private Limited
+                    </td>
+                  </tr>
+                  <tr>
+                    <td colSpan="4" style={{
+                      background: '#D6E4F0',
+                      color: '#333',
+                      padding: '4px 12px',
+                      textAlign: 'center',
+                      fontSize: '11px',
+                      border: '1px solid #000',
+                      fontWeight: '600'
+                    }}>
+                      IPQC Check Sheet - Document No. GSPL/IPQC/IPC/003
+                    </td>
+                  </tr>
+                  {/* Form Info Row */}
+                  <tr>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', background: '#E2EFDA', fontSize: '11px', fontWeight: '600', width: '25%' }}>
+                      <span>Date: </span>
+                      <input
+                        type="date"
+                        name="date"
+                        value={formData.date}
+                        onChange={handleInputChange}
+                        style={{ border: 'none', background: 'transparent', outline: 'none', width: '140px', minHeight: '30px', ...getFieldHandwritingStyle(900, 'date') }}
+                      />
+                    </td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', background: '#E2EFDA', fontSize: '11px', fontWeight: '600', width: '25%' }}>
+                      <span>Time: </span>
+                      <input
+                        type="time"
+                        name="time"
+                        value={formData.time}
+                        onChange={handleInputChange}
+                        style={{ border: 'none', background: 'transparent', outline: 'none', width: '100px', minHeight: '30px', ...getFieldHandwritingStyle(901, 'time') }}
+                      />
+                    </td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', background: '#E2EFDA', fontSize: '11px', fontWeight: '600', width: '25%' }}>
+                      <span>Shift: </span>
+                      <input
+                        type="text"
+                        name="shift"
+                        value={formData.shift}
+                        onChange={handleInputChange}
+                        style={{ border: 'none', background: 'transparent', outline: 'none', width: '80px', minHeight: '30px', ...getFieldHandwritingStyle(902, 'shift') }}
+                      />
+                    </td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', background: '#E2EFDA', fontSize: '11px', fontWeight: '600', width: '25%' }}>
+                      <span>P.O. No.: </span>
+                      <input
+                        type="text"
+                        name="poNo"
+                        value={formData.poNo}
+                        onChange={handleInputChange}
+                        style={{ border: 'none', background: 'transparent', outline: 'none', width: '100px', minHeight: '30px', ...getFieldHandwritingStyle(903, 'poNo') }}
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
 
               {/* Stage-wise Checkpoints */}
               {(() => {
                 const stages = {};
                 let stageNumber = 0;
                 let lastStage = '';
-                
+
                 formData.checkpoints.forEach((checkpoint, index) => {
                   if (checkpoint.stage !== lastStage) {
                     stageNumber++;
@@ -3118,90 +3734,97 @@ const IPQCForm = () => {
                 });
 
                 return Object.values(stages).map((stage) => (
-                  <div key={stage.number} style={{
-                    marginBottom: '15px',
-                    border: '1px solid #e0e0e0',
-                    borderRadius: '8px',
-                    overflow: 'hidden'
+                  <table key={stage.number} style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    marginTop: '-1px'
                   }}>
-                    <div style={{
-                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                      color: 'white',
-                      padding: '10px 15px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}>
-                      <span style={{ fontWeight: '700', fontSize: '13px' }}>
-                        Stage {stage.number}: {stage.name}
-                      </span>
-                      <span style={{
-                        background: 'rgba(255,255,255,0.2)',
-                        padding: '3px 10px',
-                        borderRadius: '15px',
-                        fontSize: '11px'
-                      }}>
-                        {stage.checkpoints.filter(cp => cp.subResults?.result || Object.values(cp.subResults || {}).some(v => v)).length}/{stage.checkpoints.length}
-                      </span>
-                    </div>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-                      <thead>
-                        <tr style={{ background: '#f8f9fa' }}>
-                          <th style={{ padding: '8px', border: '1px solid #e0e0e0', width: '30px' }}>Sr</th>
-                          <th style={{ padding: '8px', border: '1px solid #e0e0e0' }}>Check Point</th>
-                          <th style={{ padding: '8px', border: '1px solid #e0e0e0' }}>Criteria</th>
-                          <th style={{ padding: '8px', border: '1px solid #e0e0e0' }}>Result / Value</th>
-                        </tr>
-                      </thead>
+                    {/* Excel-style Stage Header */}
+                    <thead>
+                      <tr>
+                        <th colSpan="4" style={{
+                          background: '#4472C4',
+                          color: 'white',
+                          padding: '6px 10px',
+                          textAlign: 'left',
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          border: '1px solid #000',
+                          fontFamily: 'Calibri, Arial, sans-serif'
+                        }}>
+                          <span>Stage {stage.number}: {stage.name}</span>
+                          <span style={{
+                            float: 'right',
+                            background: 'rgba(255,255,255,0.25)',
+                            padding: '1px 8px',
+                            fontSize: '10px',
+                            fontWeight: '600'
+                          }}>
+                            {stage.checkpoints.filter(cp => cp.subResults?.result || Object.values(cp.subResults || {}).some(v => v)).length}/{stage.checkpoints.length}
+                          </span>
+                        </th>
+                      </tr>
+                      <tr style={{ background: '#D6E4F0' }}>
+                        <th style={{ padding: '5px 6px', border: '1px solid #000', width: '30px', fontSize: '10px', fontWeight: '700', textAlign: 'center', fontFamily: 'Calibri, Arial, sans-serif' }}>Sr</th>
+                        <th style={{ padding: '5px 6px', border: '1px solid #000', fontSize: '10px', fontWeight: '700', textAlign: 'left', fontFamily: 'Calibri, Arial, sans-serif' }}>Check Point</th>
+                        <th style={{ padding: '5px 6px', border: '1px solid #000', fontSize: '10px', fontWeight: '700', textAlign: 'left', fontFamily: 'Calibri, Arial, sans-serif' }}>Criteria</th>
+                        <th style={{ padding: '5px 6px', border: '1px solid #000', fontSize: '10px', fontWeight: '700', textAlign: 'left', fontFamily: 'Calibri, Arial, sans-serif', minWidth: '150px' }}>Result / Value</th>
+                      </tr>
+                    </thead>
                       <tbody>
-                        {stage.checkpoints.map((checkpoint) => {
+                        {stage.checkpoints.map((checkpoint, cpIdx) => {
                           const subResultKeys = Object.keys(checkpoint.subResults || {});
                           const hasSubResults = subResultKeys.length > 0 && !subResultKeys.includes('result');
                           const hasFilled = checkpoint.subResults?.result || Object.values(checkpoint.subResults || {}).some(v => v);
-                          
+
                           return (
-                            <tr key={checkpoint.sr} style={{ background: hasFilled ? '#e8f5e9' : 'white' }}>
-                              <td style={{ padding: '6px', border: '1px solid #e0e0e0', textAlign: 'center', fontWeight: '600' }}>{checkpoint.sr}</td>
-                              <td style={{ padding: '6px', border: '1px solid #e0e0e0' }}>
+                            <tr key={checkpoint.sr} style={{ background: hasFilled ? '#E2EFDA' : (cpIdx % 2 === 0 ? '#FFFFFF' : '#F2F2F2') }}>
+                              <td style={{ padding: '4px 6px', border: '1px solid #000', textAlign: 'center', fontWeight: '600', fontSize: '10px', fontFamily: 'Calibri, Arial, sans-serif' }}>{checkpoint.sr}</td>
+                              <td style={{ padding: '4px 6px', border: '1px solid #000', fontSize: '10px', fontFamily: 'Calibri, Arial, sans-serif' }}>
                                 <div style={{ fontWeight: '500' }}>{checkpoint.checkpoint}</div>
-                                <div style={{ fontSize: '9px', color: '#888' }}>{checkpoint.quantum} / {checkpoint.frequency}</div>
+                                <div style={{ fontSize: '9px', color: '#666' }}>{checkpoint.quantum} / {checkpoint.frequency}</div>
                               </td>
-                              <td style={{ padding: '6px', border: '1px solid #e0e0e0', fontSize: '10px', color: '#666' }}>{checkpoint.criteria}</td>
-                              <td style={{ padding: '6px', border: '1px solid #e0e0e0' }}>
+                              <td style={{ padding: '4px 6px', border: '1px solid #000', fontSize: '9px', color: '#444', fontFamily: 'Calibri, Arial, sans-serif' }}>{checkpoint.criteria}</td>
+                              <td style={{ padding: '3px 4px', border: '1px solid #000', fontFamily: 'Calibri, Arial, sans-serif' }}>
                                 {hasSubResults ? (
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
                                     {subResultKeys.map((key, idx) => (
-                                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                        <label style={{ fontSize: '9px', color: '#666' }}>{key}:</label>
-                                        <input 
+                                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
+                                        <label style={{ fontSize: '8px', color: '#333', fontWeight: '600' }}>{key}:</label>
+                                        <input
                                           type="text"
                                           value={checkpoint.subResults[key] || ''}
                                           onChange={(e) => handleSubResultChange(checkpoint.index, key, e.target.value)}
                                           style={{
-                                            width: '50px',
-                                            padding: '3px 5px',
-                                            border: '1px solid #ddd',
-                                            borderRadius: '3px',
-                                            background: checkpoint.subResults[key] ? '#e8f5e9' : 'white',
-                                            ...getCurrentHandwritingStyle()
+                                            width: '65px',
+                                            padding: '4px 3px',
+                                            border: '1px solid #999',
+                                            borderRadius: '0',
+                                            background: checkpoint.subResults[key] ? '#E2EFDA' : 'white',
+                                            outline: 'none',
+                                            minHeight: '28px',
+                                            ...getFieldHandwritingStyle(checkpoint.index, key)
                                           }}
                                         />
                                       </div>
                                     ))}
                                   </div>
                                 ) : (
-                                  <input 
+                                  <input
                                     type="text"
                                     value={checkpoint.subResults?.result || ''}
                                     onChange={(e) => handleSubResultChange(checkpoint.index, 'result', e.target.value)}
-                                    placeholder="Enter result"
+                                    placeholder=""
                                     style={{
                                       width: '100%',
-                                      padding: '5px 8px',
-                                      border: '1px solid #ddd',
-                                      borderRadius: '4px',
-                                      background: checkpoint.subResults?.result ? '#e8f5e9' : 'white',
-                                      ...getCurrentHandwritingStyle()
+                                      padding: '5px 6px',
+                                      border: '1px solid #999',
+                                      borderRadius: '0',
+                                      background: checkpoint.subResults?.result ? '#E2EFDA' : 'white',
+                                      outline: 'none',
+                                      boxSizing: 'border-box',
+                                      minHeight: '32px',
+                                      ...getFieldHandwritingStyle(checkpoint.index, 'result')
                                     }}
                                   />
                                 )}
@@ -3211,7 +3834,6 @@ const IPQCForm = () => {
                         })}
                       </tbody>
                     </table>
-                  </div>
                 ));
               })()}
             </div>
@@ -3240,8 +3862,8 @@ const IPQCForm = () => {
                   onClick={() => setActivePdfPage(pageNum)}
                   style={{
                     padding: '6px 12px',
-                    background: activePdfPage === pageNum 
-                      ? 'linear-gradient(135deg, #00d4ff 0%, #00ff88 100%)' 
+                    background: activePdfPage === pageNum
+                      ? 'linear-gradient(135deg, #00d4ff 0%, #00ff88 100%)'
                       : 'rgba(255,255,255,0.1)',
                     color: activePdfPage === pageNum ? '#1a1a2e' : 'white',
                     border: 'none',
@@ -3374,9 +3996,9 @@ const IPQCForm = () => {
           boxShadow: '0 -4px 20px rgba(0,0,0,0.15)'
         }}>
           {/* Handwriting Toggle */}
-          <label style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
+          <label style={{
+            display: 'flex',
+            alignItems: 'center',
             gap: '6px',
             cursor: 'pointer',
             background: useHandwritingFont ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
@@ -3395,14 +4017,14 @@ const IPQCForm = () => {
               style={{ width: '16px', height: '16px', accentColor: '#00ff88' }}
             />
           </label>
-          
+
           {/* Save Button */}
           <button
             onClick={saveEditedForm}
             disabled={isSaving}
             style={{
               padding: '10px 24px',
-              background: isSaving 
+              background: isSaving
                 ? 'rgba(255,255,255,0.3)'
                 : 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
               color: 'white',
@@ -3500,20 +4122,20 @@ const IPQCForm = () => {
             <div style={{ fontSize: '60px', marginBottom: '15px' }}>
               {isLoadingFromAPI ? '📄' : '🔍'}
             </div>
-            <h2 style={{ 
-              color: '#1976d2', 
+            <h2 style={{
+              color: '#1976d2',
               margin: '0 0 10px 0',
               fontSize: '22px',
               fontWeight: '600'
             }}>
               {isLoadingFromAPI ? 'Loading PDF...' : 'Processing OCR...'}
             </h2>
-            <p style={{ 
-              color: '#666', 
+            <p style={{
+              color: '#666',
               margin: '0 0 15px 0',
               fontSize: '14px'
             }}>
-              {ocrProgress.total > 0 
+              {ocrProgress.total > 0
                 ? `Page ${ocrProgress.current} of ${ocrProgress.total}`
                 : 'Please wait...'}
             </p>
@@ -3537,7 +4159,7 @@ const IPQCForm = () => {
               </div>
             )}
             {/* Animated Dots */}
-            <div style={{ 
+            <div style={{
               marginTop: '15px',
               display: 'flex',
               justifyContent: 'center',
@@ -3589,10 +4211,10 @@ const IPQCForm = () => {
         minHeight: 0
       }}>
         {/* Title Bar with Refresh */}
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           marginBottom: '10px',
           padding: '12px 20px',
           background: '#ffffff',
@@ -3600,38 +4222,102 @@ const IPQCForm = () => {
           boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
           border: '1px solid #e0e0e0'
         }}>
-          <h2 style={{ 
-            margin: 0, 
-            color: '#1976d2', 
+          <h2 style={{
+            margin: 0,
+            color: '#1976d2',
             fontSize: '18px',
             fontWeight: '600'
           }}>
             📋 IPQC Checklists ({availableChecklists.length})
           </h2>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={fetchAvailableChecklists}
+              disabled={isLoadingChecklists}
+              style={{
+                padding: '8px 20px',
+                background: '#1976d2',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                fontSize: '13px'
+              }}
+            >
+              {isLoadingChecklists ? '⏳...' : '🔄 Refresh'}
+            </button>
+            
+            {/* Batch Auto-Process Button - Now in title bar */}
+            <button
+              onClick={() => setShowBatchProcessor(true)}
+              style={{
+                padding: '8px 20px',
+                background: 'linear-gradient(135deg, #217346 0%, #2e9e5e 100%)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                fontSize: '13px',
+                boxShadow: '0 2px 8px rgba(33,115,70,0.3)'
+              }}
+            >
+              ⚡ Auto Batch
+            </button>
+          </div>
+
+          {/* Test Handwritten Export Button - Works without backend */}
           <button
-            onClick={fetchAvailableChecklists}
-            disabled={isLoadingChecklists}
+            onClick={testHandwrittenExport}
+            disabled={isExportingHandwrittenExcel}
             style={{
               padding: '8px 20px',
-              background: '#1976d2',
+              background: isExportingHandwrittenExcel
+                ? '#ccc'
+                : 'linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%)',
               color: '#ffffff',
               border: 'none',
               borderRadius: '6px',
               fontWeight: '600',
-              cursor: 'pointer',
-              fontSize: '13px'
+              cursor: isExportingHandwrittenExcel ? 'not-allowed' : 'pointer',
+              fontSize: '13px',
+              boxShadow: '0 2px 8px rgba(30,58,138,0.3)'
             }}
           >
-            {isLoadingChecklists ? '⏳...' : '🔄 Refresh'}
+            {isExportingHandwrittenExcel ? '⏳ Exporting...' : '🧪 Test Handwritten Excel'}
+          </button>
+
+          {/* Test Handwritten PDF Button */}
+          <button
+            onClick={testHandwrittenPDFExport}
+            disabled={isExportingHandwrittenPDF}
+            style={{
+              padding: '8px 20px',
+              background: isExportingHandwrittenPDF
+                ? '#ccc'
+                : 'linear-gradient(135deg, #C62828 0%, #E53935 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '6px',
+              fontWeight: '600',
+              cursor: isExportingHandwrittenPDF ? 'not-allowed' : 'pointer',
+              fontSize: '13px',
+              boxShadow: '0 2px 8px rgba(198,40,40,0.3)'
+            }}
+          >
+            {isExportingHandwrittenPDF ? '⏳ Exporting...' : '📄 Test Handwritten PDF'}
           </button>
         </div>
-        
+
+
+
         {apiError && (
-          <div style={{ 
-            background: '#ffebee', 
-            padding: '12px 20px', 
-            borderRadius: '8px', 
-            marginBottom: '15px', 
+          <div style={{
+            background: '#ffebee',
+            padding: '12px 20px',
+            borderRadius: '8px',
+            marginBottom: '15px',
             textAlign: 'center',
             fontWeight: '500',
             color: '#c62828',
@@ -3643,433 +4329,433 @@ const IPQCForm = () => {
 
         {/* Table always visible - no toggle */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-            {/* ======== COMPACT FILTER BAR ======== */}
+          {/* ======== COMPACT FILTER BAR ======== */}
+          <div style={{
+            display: 'flex',
+            gap: '10px',
+            alignItems: 'center',
+            padding: '10px 15px',
+            background: '#ffffff',
+            borderRadius: '8px',
+            marginBottom: '8px',
+            border: '1px solid #e0e0e0',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+            flexShrink: 0
+          }}>
+            <span style={{ fontWeight: '600', color: '#1976d2', fontSize: '12px' }}>🔍</span>
+
+            {/* Date Filter */}
+            <input
+              type="date"
+              value={filterDate}
+              onChange={(e) => setFilterDate(e.target.value)}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid #ddd',
+                background: '#fff',
+                color: '#333',
+                fontSize: '12px',
+                outline: 'none'
+              }}
+              placeholder="Filter by Date"
+            />
+
+            {/* Line Filter */}
+            <select
+              value={filterLine}
+              onChange={(e) => setFilterLine(e.target.value)}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid #ddd',
+                background: '#fff',
+                color: '#333',
+                fontSize: '12px',
+                minWidth: '120px',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="">📍 All Lines</option>
+              {[...new Set(availableChecklists.map(c => c.Line).filter(Boolean))].sort().map(line => (
+                <option key={line} value={line}>{line}</option>
+              ))}
+            </select>
+
+            {/* Shift Filter */}
+            <select
+              value={filterShift}
+              onChange={(e) => setFilterShift(e.target.value)}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid #ddd',
+                background: '#fff',
+                color: '#333',
+                fontSize: '12px',
+                minWidth: '120px',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="">🌓 All Shifts</option>
+              <option value="Day">☀️ Day</option>
+              <option value="Night">🌙 Night</option>
+            </select>
+
+            {/* Clear Filters */}
+            {(filterDate || filterLine || filterShift) && (
+              <button
+                onClick={() => {
+                  setFilterDate('');
+                  setFilterLine('');
+                  setFilterShift('');
+                }}
+                style={{
+                  padding: '5px 10px',
+                  background: '#f5f5f5',
+                  color: '#666',
+                  border: '1px solid #ddd',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '11px'
+                }}
+              >
+                ✕ Clear
+              </button>
+            )}
+          </div>
+
+          {/* ======== CHECKLIST TABLE - FULL HEIGHT ======== */}
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            border: '1px solid #e0e0e0',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0
+          }}>
+            {/* Table Header */}
             <div style={{
-              display: 'flex',
+              display: 'grid',
+              gridTemplateColumns: '50px 1.5fr 100px 80px 80px 80px 100px 200px',
               gap: '10px',
-              alignItems: 'center',
-              padding: '10px 15px',
-              background: '#ffffff',
-              borderRadius: '8px',
-              marginBottom: '8px',
-              border: '1px solid #e0e0e0',
-              boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-              flexShrink: 0
+              padding: '12px 15px',
+              background: '#1976d2',
+              color: '#ffffff',
+              fontWeight: '600',
+              fontSize: '12px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.3px'
             }}>
-              <span style={{ fontWeight: '600', color: '#1976d2', fontSize: '12px' }}>🔍</span>
-              
-              {/* Date Filter */}
-              <input
-                type="date"
-                value={filterDate}
-                onChange={(e) => setFilterDate(e.target.value)}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #ddd',
-                  background: '#fff',
-                  color: '#333',
-                  fontSize: '12px',
-                  outline: 'none'
-                }}
-                placeholder="Filter by Date"
-              />
-              
-              {/* Line Filter */}
-              <select
-                value={filterLine}
-                onChange={(e) => setFilterLine(e.target.value)}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #ddd',
-                  background: '#fff',
-                  color: '#333',
-                  fontSize: '12px',
-                  minWidth: '120px',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="">📍 All Lines</option>
-                {[...new Set(availableChecklists.map(c => c.Line).filter(Boolean))].sort().map(line => (
-                  <option key={line} value={line}>{line}</option>
-                ))}
-              </select>
-              
-              {/* Shift Filter */}
-              <select
-                value={filterShift}
-                onChange={(e) => setFilterShift(e.target.value)}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #ddd',
-                  background: '#fff',
-                  color: '#333',
-                  fontSize: '12px',
-                  minWidth: '120px',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="">🌓 All Shifts</option>
-                <option value="Day">☀️ Day</option>
-                <option value="Night">🌙 Night</option>
-              </select>
-              
-              {/* Clear Filters */}
-              {(filterDate || filterLine || filterShift) && (
-                <button
-                  onClick={() => {
-                    setFilterDate('');
-                    setFilterLine('');
-                    setFilterShift('');
-                  }}
-                  style={{
-                    padding: '5px 10px',
-                    background: '#f5f5f5',
-                    color: '#666',
-                    border: '1px solid #ddd',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontWeight: '500',
-                    fontSize: '11px'
-                  }}
-                >
-                  ✕ Clear
-                </button>
-              )}
+              <span>#</span>
+              <span>📅 Date</span>
+              <span>📍 Line</span>
+              <span>🌓 Shift</span>
+              <span>📊 Status</span>
+              <span>📄 Pages</span>
+              <span>🤖 OCR</span>
+              <span>🎯 Actions</span>
             </div>
 
-            {/* ======== CHECKLIST TABLE - FULL HEIGHT ======== */}
+            {/* Table Body - Scrollable */}
             <div style={{
-              background: '#ffffff',
-              borderRadius: '8px',
-              overflow: 'hidden',
-              border: '1px solid #e0e0e0',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
               flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
+              overflowY: 'auto',
               minHeight: 0
             }}>
-              {/* Table Header */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '50px 1.5fr 100px 80px 80px 80px 100px 200px',
-                gap: '10px',
-                padding: '12px 15px',
-                background: '#1976d2',
-                color: '#ffffff',
-                fontWeight: '600',
-                fontSize: '12px',
-                textTransform: 'uppercase',
-                letterSpacing: '0.3px'
-              }}>
-                <span>#</span>
-                <span>📅 Date</span>
-                <span>📍 Line</span>
-                <span>🌓 Shift</span>
-                <span>📊 Status</span>
-                <span>📄 Pages</span>
-                <span>🤖 OCR</span>
-                <span>🎯 Actions</span>
-              </div>
-              
-              {/* Table Body - Scrollable */}
-              <div style={{ 
-                flex: 1, 
-                overflowY: 'auto',
-                minHeight: 0
-              }}>
-                {availableChecklists
-                  .filter(item => {
-                    // Apply filters
-                    if (filterDate && !item.date?.includes(filterDate)) return false;
-                    if (filterLine && item.Line !== filterLine) return false;
-                    if (filterShift && item.Shift !== filterShift) return false;
-                    return true;
-                  })
-                  .map((item, idx) => {
-                    const isSelected = selectedChecklist?.checkListId === item.checkListId;
-                    const pageCount = [
-                      item.Page1PdfFile, item.Page2PdfFile, item.Page3PdfFile,
-                      item.Page4PdfFile, item.Page5PdfFile, item.Page6PdfFile, item.Page7PdfFile
-                    ].filter(Boolean).length;
-                    
-                    return (
-                      <div
-                        key={item.checkListId}
-                        onClick={() => setSelectedChecklist(item)}
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '50px 1.5fr 100px 80px 80px 80px 100px 200px',
-                          gap: '10px',
-                          padding: '10px 15px',
-                          borderBottom: '1px solid #f0f0f0',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          background: isSelected 
-                            ? '#e3f2fd' 
-                            : '#fff',
-                          borderLeft: isSelected ? '3px solid #1976d2' : '3px solid transparent',
-                          fontSize: '12px'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected) e.currentTarget.style.background = '#fafafa';
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected) e.currentTarget.style.background = '#fff';
-                        }}
-                      >
-                        <span style={{ 
-                          color: '#666', 
-                          fontWeight: '600',
-                          display: 'flex',
-                          alignItems: 'center',
-                          fontSize: '12px'
-                        }}>{idx + 1}</span>
-                        
-                        <span style={{ 
-                          fontWeight: '500',
-                          display: 'flex',
-                          alignItems: 'center',
-                          color: isSelected ? '#1976d2' : '#333',
-                          fontSize: '12px'
-                        }}>
-                          {formatDate(item.date)}
-                        </span>
-                        
-                        <span style={{
-                          display: 'flex',
-                          alignItems: 'center'
-                        }}>
-                          <span style={{
-                            background: '#e3f2fd',
-                            color: '#1976d2',
-                            padding: '3px 10px',
-                            borderRadius: '12px',
-                            fontSize: '11px',
-                            fontWeight: '500'
-                          }}>{item.Line || 'N/A'}</span>
-                        </span>
-                        
-                        <span style={{ 
-                          display: 'flex',
-                          alignItems: 'center'
-                        }}>
-                          <span style={{
-                            background: item.Shift === 'Day' 
-                              ? '#fff3e0' 
-                              : '#ede7f6',
-                            color: item.Shift === 'Day' ? '#e65100' : '#5e35b1',
-                            padding: '3px 10px',
-                            borderRadius: '12px',
-                            fontSize: '10px',
-                            fontWeight: '500',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '3px'
-                          }}>
-                            {item.Shift === 'Day' ? '☀️' : '🌙'}
-                          </span>
-                        </span>
-                        
-                        {/* OCR Status Column */}
-                        {(() => {
-                          const ocrStatus = getChecklistStatus(item);
-                          return (
-                            <span style={{ 
-                              display: 'flex',
-                              alignItems: 'center'
-                            }}>
-                              <span style={{
-                                background: ocrStatus.saved 
-                                  ? '#e8f5e9' 
-                                  : ocrStatus.processed 
-                                    ? '#fce4ec'
-                                    : '#f5f5f5',
-                                color: ocrStatus.saved 
-                                  ? '#2e7d32' 
-                                  : ocrStatus.processed 
-                                    ? '#c2185b'
-                                    : '#757575',
-                                padding: '3px 10px',
-                                borderRadius: '12px',
-                                fontSize: '10px',
-                                fontWeight: '500',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '3px'
-                              }}>
-                                {ocrStatus.saved ? '💾 Saved' : ocrStatus.processed ? '✏️ Edit' : '⏸️ Pending'}
-                              </span>
-                            </span>
-                          );
-                        })()}
-                        
-                        <span style={{ 
-                          display: 'flex',
-                          alignItems: 'center'
-                        }}>
-                          <span style={{
-                            background: item.Status === 'Completed' 
-                              ? '#e8f5e9' 
-                              : '#fff3e0',
-                            color: item.Status === 'Completed' ? '#2e7d32' : '#e65100',
-                            padding: '3px 8px',
-                            borderRadius: '12px',
-                            fontSize: '10px',
-                            fontWeight: '500'
-                          }}>{item.Status === 'Completed' ? '✓' : '⏳'}</span>
-                        </span>
-                        
-                        <span style={{ 
-                          display: 'flex',
-                          alignItems: 'center',
-                          color: pageCount === 7 ? '#2e7d32' : '#e65100',
-                          fontWeight: '500',
-                          fontSize: '11px'
-                        }}>
-                          {pageCount}/7
-                        </span>
-                        
-                        <span style={{ 
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}>
-                          {/* Smart Load Button - Load Saved if available, else OCR */}
-                          {(() => {
-                            const status = getChecklistStatus(item);
-                            if (status.saved) {
-                              // Show Load Saved button if form is saved
-                              return (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const checklistId = item._id || item.id || `${item.date}_${item.Line}_${item.Shift}`;
-                                    if (loadSavedForm(checklistId)) {
-                                      setSelectedChecklist(item);
-                                      loadPdfPreviews(item);
-                                      setFormViewMode(true);
-                                    } else {
-                                      console.log('❌ Could not load saved form');
-                                    }
-                                  }}
-                                  style={{
-                                    padding: '5px 12px',
-                                    background: '#2e7d32',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    fontWeight: '500',
-                                    cursor: 'pointer',
-                                    fontSize: '10px'
-                                  }}
-                                  title="Open Saved Form"
-                                >
-                                  💾 Open Saved
-                                </button>
-                              );
-                            } else {
-                              // Show OCR button if not saved
-                              return (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    loadChecklistFromAPI(item);
-                                  }}
-                                  disabled={isLoadingFromAPI}
-                                  style={{
-                                    padding: '5px 12px',
-                                    background: '#1976d2',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    fontWeight: '500',
-                                    cursor: 'pointer',
-                                    fontSize: '10px'
-                                  }}
-                                  title="Load & OCR Process"
-                                >
-                                  📥 Load OCR
-                                </button>
-                              );
-                            }
-                          })()}
-                          
-                          {/* Preview Button */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedChecklist(item);
-                              loadPdfPreviews(item);
-                            }}
-                            disabled={isLoadingPreviews}
-                            style={{
-                              padding: '4px 10px',
-                              background: '#7b1fa2',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '4px',
-                              fontWeight: '500',
-                              cursor: 'pointer',
-                              fontSize: '10px'
-                            }}
-                            title="Preview PDF"
-                          >
-                            👁️
-                          </button>
-                          
-                          {/* View Form Button */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedChecklist(item);
-                              loadPdfPreviews(item); // Load PDF previews for split view
-                              setFormViewMode(true); // Open split view mode
-                            }}
-                            style={{
-                              padding: '4px 10px',
-                              background: '#455a64',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '4px',
-                              fontWeight: '500',
-                              cursor: 'pointer',
-                              fontSize: '10px'
-                            }}
-                            title="View Form"
-                          >
-                            📋
-                          </button>
-                        </span>
-                      </div>
-                    );
-                  })}
-                
-                {/* No Results */}
-                {availableChecklists.filter(item => {
+              {availableChecklists
+                .filter(item => {
+                  // Apply filters
                   if (filterDate && !item.date?.includes(filterDate)) return false;
                   if (filterLine && item.Line !== filterLine) return false;
                   if (filterShift && item.Shift !== filterShift) return false;
                   return true;
-                }).length === 0 && (
+                })
+                .map((item, idx) => {
+                  const isSelected = selectedChecklist?.checkListId === item.checkListId;
+                  const pageCount = [
+                    item.Page1PdfFile, item.Page2PdfFile, item.Page3PdfFile,
+                    item.Page4PdfFile, item.Page5PdfFile, item.Page6PdfFile, item.Page7PdfFile
+                  ].filter(Boolean).length;
+
+                  return (
+                    <div
+                      key={item.checkListId}
+                      onClick={() => setSelectedChecklist(item)}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '50px 1.5fr 100px 80px 80px 80px 100px 200px',
+                        gap: '10px',
+                        padding: '10px 15px',
+                        borderBottom: '1px solid #f0f0f0',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        background: isSelected
+                          ? '#e3f2fd'
+                          : '#fff',
+                        borderLeft: isSelected ? '3px solid #1976d2' : '3px solid transparent',
+                        fontSize: '12px'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isSelected) e.currentTarget.style.background = '#fafafa';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isSelected) e.currentTarget.style.background = '#fff';
+                      }}
+                    >
+                      <span style={{
+                        color: '#666',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        fontSize: '12px'
+                      }}>{idx + 1}</span>
+
+                      <span style={{
+                        fontWeight: '500',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: isSelected ? '#1976d2' : '#333',
+                        fontSize: '12px'
+                      }}>
+                        {formatDate(item.date)}
+                      </span>
+
+                      <span style={{
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}>
+                        <span style={{
+                          background: '#e3f2fd',
+                          color: '#1976d2',
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          fontSize: '11px',
+                          fontWeight: '500'
+                        }}>{item.Line || 'N/A'}</span>
+                      </span>
+
+                      <span style={{
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}>
+                        <span style={{
+                          background: item.Shift === 'Day'
+                            ? '#fff3e0'
+                            : '#ede7f6',
+                          color: item.Shift === 'Day' ? '#e65100' : '#5e35b1',
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          fontSize: '10px',
+                          fontWeight: '500',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '3px'
+                        }}>
+                          {item.Shift === 'Day' ? '☀️' : '🌙'}
+                        </span>
+                      </span>
+
+                      {/* OCR Status Column */}
+                      {(() => {
+                        const ocrStatus = getChecklistStatus(item);
+                        return (
+                          <span style={{
+                            display: 'flex',
+                            alignItems: 'center'
+                          }}>
+                            <span style={{
+                              background: ocrStatus.saved
+                                ? '#e8f5e9'
+                                : ocrStatus.processed
+                                  ? '#fce4ec'
+                                  : '#f5f5f5',
+                              color: ocrStatus.saved
+                                ? '#2e7d32'
+                                : ocrStatus.processed
+                                  ? '#c2185b'
+                                  : '#757575',
+                              padding: '3px 10px',
+                              borderRadius: '12px',
+                              fontSize: '10px',
+                              fontWeight: '500',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}>
+                              {ocrStatus.saved ? '💾 Saved' : ocrStatus.processed ? '✏️ Edit' : '⏸️ Pending'}
+                            </span>
+                          </span>
+                        );
+                      })()}
+
+                      <span style={{
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}>
+                        <span style={{
+                          background: item.Status === 'Completed'
+                            ? '#e8f5e9'
+                            : '#fff3e0',
+                          color: item.Status === 'Completed' ? '#2e7d32' : '#e65100',
+                          padding: '3px 8px',
+                          borderRadius: '12px',
+                          fontSize: '10px',
+                          fontWeight: '500'
+                        }}>{item.Status === 'Completed' ? '✓' : '⏳'}</span>
+                      </span>
+
+                      <span style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: pageCount === 7 ? '#2e7d32' : '#e65100',
+                        fontWeight: '500',
+                        fontSize: '11px'
+                      }}>
+                        {pageCount}/7
+                      </span>
+
+                      <span style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}>
+                        {/* Smart Load Button - Load Saved if available, else OCR */}
+                        {(() => {
+                          const status = getChecklistStatus(item);
+                          if (status.saved) {
+                            // Show Load Saved button if form is saved
+                            return (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const checklistId = item._id || item.id || `${item.date}_${item.Line}_${item.Shift}`;
+                                  if (loadSavedForm(checklistId)) {
+                                    setSelectedChecklist(item);
+                                    loadPdfPreviews(item);
+                                    setFormViewMode(true);
+                                  } else {
+                                    console.log('❌ Could not load saved form');
+                                  }
+                                }}
+                                style={{
+                                  padding: '5px 12px',
+                                  background: '#2e7d32',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  fontWeight: '500',
+                                  cursor: 'pointer',
+                                  fontSize: '10px'
+                                }}
+                                title="Open Saved Form"
+                              >
+                                💾 Open Saved
+                              </button>
+                            );
+                          } else {
+                            // Show OCR button if not saved
+                            return (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  loadChecklistFromAPI(item);
+                                }}
+                                disabled={isLoadingFromAPI}
+                                style={{
+                                  padding: '5px 12px',
+                                  background: '#1976d2',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  fontWeight: '500',
+                                  cursor: 'pointer',
+                                  fontSize: '10px'
+                                }}
+                                title="Load & OCR Process"
+                              >
+                                📥 Load OCR
+                              </button>
+                            );
+                          }
+                        })()}
+
+                        {/* Preview Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedChecklist(item);
+                            loadPdfPreviews(item);
+                          }}
+                          disabled={isLoadingPreviews}
+                          style={{
+                            padding: '4px 10px',
+                            background: '#7b1fa2',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontWeight: '500',
+                            cursor: 'pointer',
+                            fontSize: '10px'
+                          }}
+                          title="Preview PDF"
+                        >
+                          👁️
+                        </button>
+
+                        {/* View Form Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedChecklist(item);
+                            loadPdfPreviews(item); // Load PDF previews for split view
+                            setFormViewMode(true); // Open split view mode
+                          }}
+                          style={{
+                            padding: '4px 10px',
+                            background: '#455a64',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontWeight: '500',
+                            cursor: 'pointer',
+                            fontSize: '10px'
+                          }}
+                          title="View Form"
+                        >
+                          📋
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+
+              {/* No Results */}
+              {availableChecklists.filter(item => {
+                if (filterDate && !item.date?.includes(filterDate)) return false;
+                if (filterLine && item.Line !== filterLine) return false;
+                if (filterShift && item.Shift !== filterShift) return false;
+                return true;
+              }).length === 0 && (
                   <div style={{
                     padding: '40px',
                     textAlign: 'center',
                     color: '#888'
                   }}>
-                    {availableChecklists.length === 0 
+                    {availableChecklists.length === 0
                       ? '📭 No checklists found. Click "Refresh" to load data.'
                       : '🔍 No results match your filters. Try adjusting the filters.'}
                   </div>
                 )}
-              </div>
             </div>
           </div>
         </div>
       </div>
+    </div>
   );
 };
 
