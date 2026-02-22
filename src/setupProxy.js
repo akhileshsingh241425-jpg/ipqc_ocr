@@ -34,7 +34,7 @@ module.exports = function(app) {
   app.use(
     '/proxy-azure-ocr',
     createProxyMiddleware({
-      target: 'https://ocr-app14007.cognitiveservices.azure.com',
+      target: 'https://ipqcdoc1234.cognitiveservices.azure.com',
       changeOrigin: true,
       pathRewrite: {
         '^/proxy-azure-ocr': '', // Remove /proxy-azure-ocr prefix when forwarding
@@ -51,6 +51,30 @@ module.exports = function(app) {
       },
       onError: function(err, req, res) {
         console.error('❌ Azure OCR Proxy error:', err);
+      }
+    })
+  );
+
+  // Proxy for Azure Document Intelligence API to bypass CORS
+  app.use(
+    '/proxy-doc-intelligence',
+    createProxyMiddleware({
+      target: 'https://ipqcdoc1234.cognitiveservices.azure.com',
+      changeOrigin: true,
+      pathRewrite: {
+        '^/proxy-doc-intelligence': '',
+      },
+      secure: true,
+      onProxyReq: function(proxyReq, req, res) {
+        console.log('🔄 Proxying Document Intelligence request:', req.method, req.url);
+      },
+      onProxyRes: function (proxyRes, req, res) {
+        console.log('📥 Document Intelligence response:', proxyRes.statusCode);
+        proxyRes.headers['Access-Control-Allow-Origin'] = '*';
+        proxyRes.headers['Access-Control-Expose-Headers'] = 'Operation-Location';
+      },
+      onError: function(err, req, res) {
+        console.error('❌ Document Intelligence Proxy error:', err);
       }
     })
   );

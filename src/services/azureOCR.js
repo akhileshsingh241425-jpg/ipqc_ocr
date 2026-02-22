@@ -1,6 +1,6 @@
 // Azure Computer Vision Configuration
-const key = process.env.REACT_APP_AZURE_CV_KEY;
-const endpoint = process.env.REACT_APP_AZURE_CV_ENDPOINT;
+const key = process.env.REACT_APP_AZURE_DI_KEY || process.env.REACT_APP_AZURE_CV_KEY;
+const endpoint = process.env.REACT_APP_AZURE_DI_ENDPOINT || process.env.REACT_APP_AZURE_CV_ENDPOINT;
 
 // Use proxy for local development to bypass CORS
 const useProxy = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -88,9 +88,10 @@ export const extractTextFromImage = async (imageDataUrl) => {
       bytes[i] = binaryString.charCodeAt(i);
     }
 
-    // Step 1: Submit the image for OCR analysis with retry logic for rate limiting
-    const analyzeUrl = `${proxyEndpoint}/vision/v3.2/read/analyze`;
-    console.log('OCR API URL:', analyzeUrl);
+    // Step 1: Submit the image for OCR analysis using Document Intelligence Layout API
+    // Falls back to Computer Vision Read API if DI fails
+    const analyzeUrl = `${proxyEndpoint}/formrecognizer/documentModels/prebuilt-layout:analyze?api-version=2023-07-31`;
+    console.log('OCR API URL (Document Intelligence):', analyzeUrl);
     
     let analyzeResponse;
     let retryAttempts = 0;
@@ -190,12 +191,31 @@ export const extractTextFromImage = async (imageDataUrl) => {
     }
 
     // Step 3: Extract text from results
+    // Support both Document Intelligence and Computer Vision response formats
     let extractedText = '';
-    if (result.analyzeResult && result.analyzeResult.readResults) {
-      for (const page of result.analyzeResult.readResults) {
-        for (const line of page.lines) {
-          extractedText += line.text + '\n';
+    
+    if (result.analyzeResult) {
+      // Document Intelligence format (prebuilt-layout) - has 'content' field with full text
+      if (result.analyzeResult.content) {
+        extractedText = result.analyzeResult.content;
+        console.log('✅ Using Document Intelligence structured output');
+        
+        // Log table info if found
+        if (result.analyzeResult.tables && result.analyzeResult.tables.length > 0) {
+          console.log(`📊 Found ${result.analyzeResult.tables.length} tables in document`);
         }
+        if (result.analyzeResult.keyValuePairs && result.analyzeResult.keyValuePairs.length > 0) {
+          console.log(`🔑 Found ${result.analyzeResult.keyValuePairs.length} key-value pairs`);
+        }
+      }
+      // Computer Vision Read API format (v3.2) - has 'readResults' with lines
+      else if (result.analyzeResult.readResults) {
+        for (const page of result.analyzeResult.readResults) {
+          for (const line of page.lines) {
+            extractedText += line.text + '\n';
+          }
+        }
+        console.log('📝 Using Computer Vision OCR text output');
       }
     }
 

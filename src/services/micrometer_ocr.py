@@ -14,9 +14,9 @@ import io
 import numpy as np
 
 # Azure Computer Vision Configuration
-# Using same keys as IPQC OCR (from .env file)
-AZURE_CV_KEY = '78ROlPKtUHUaFIwMFnzqYwOu1VvSS2VuksdXBVQkKln1fnoBl1KfJQQJ99BIAC3pKaRXJ3w3AAAFACOGJvB4'
-AZURE_CV_ENDPOINT = 'https://ocr-app14007.cognitiveservices.azure.com'
+# Using same keys as IPQC OCR (from .env file or environment variables)
+AZURE_CV_KEY = os.environ.get('REACT_APP_AZURE_DI_KEY', os.environ.get('REACT_APP_AZURE_CV_KEY', ''))
+AZURE_CV_ENDPOINT = os.environ.get('REACT_APP_AZURE_DI_ENDPOINT', os.environ.get('REACT_APP_AZURE_CV_ENDPOINT', ''))
 
 
 def preprocess_micrometer_image(image_path):
